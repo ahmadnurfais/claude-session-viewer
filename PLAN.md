@@ -106,3 +106,138 @@ Add `FILE_HISTORY_BASE=/claude/file-history` env var.
 
 | Method | Path | Description |
 |--------|------|-------------|
+| `GET` | `/api/sessions/{session_id}/files` | List all files tracked in a session with version counts |
+| `GET` | `/api/sessions/{session_id}/files/{hash}/versions` | List all versions of a specific file |
+| `GET` | `/api/file-history?path=...` | Return raw content of a file-history snapshot (path-based, like `/api/content`) |
+
+The `_safe_path()` function needs updating to also allow paths under `FILE_HISTORY_BASE`.
+
+---
+
+### Backend Logic (`main.py`)
+
+1. Add `FILE_HISTORY_BASE = Path(os.getenv("FILE_HISTORY_BASE", "/claude/file-history"))`
+2. Update `_safe_path()` to allow `FILE_HISTORY_BASE`
+3. Add helper `_get_session_files(session_id, projects_base)`:
+   - Read the session JSONL
+   - Collect all `file-history-snapshot` records
+   - Build a map: `filename → [{ hash, version, backupTime }]` (sorted by version)
+   - Return only the latest snapshot per file (latest `trackedFileBackups`)
+4. Add the 3 new endpoints above
+5. Works for both live and backup session paths — the `session_id` + `projects_base` combination determines which JSONL to read; file-history is always read from `FILE_HISTORY_BASE`
+
+---
+
+### Implementation Order (Feature 1)
+
+1. `docker-compose.yaml` — add file-history volume + env var
+2. `main.py` — `_safe_path` update + helper + 3 new endpoints
+3. `index.html` — tab switcher UI + Files Changed panel
+4. Rebuild and test
+
+---
+
+## Feature 2: File-History in Backup (NOT YET IMPLEMENTED)
+
+### Why back up file-history?
+File-history snapshots are the actual code files Claude wrote/edited. They are tightly
+coupled to sessions — if a session is lost, its file-history entries become unrecoverable.
+This fits the existing domain-based backup structure.
+
+### Storage Structure Addition
+```
+/backups/
+  2026-03-26/
+    backup-info.json
+    projects/                    ← already implemented
+      ...
+    file-history/                ← NEW domain
+      <session-uuid>/
+        <hash>@v1
+        <hash>@v2
+        ...
+```
+
+### Selective Backup Behaviour
+| Backup scope | file-history scope |
+|---|---|
+| All projects | Copy entire `file-history/` dir |
+| Specific projects | Copy only session UUIDs that belong to selected projects (extracted from their JSONL files) |
+
+**How to find session UUIDs for a project:**
+Read each `*.jsonl` file in the project dir whose stem is a UUID — those are the session IDs.
+Match them against subdirectories in `file-history/`.
+
+### `backup-info.json` update
+```json
+{
+  "timestamp": "...",
+  "trigger": "scheduled",
+  "domains": {
+    "projects": { "projects": ["all"], "status": "success", "count": 5 },
+    "file-history": { "sessions": ["all"], "status": "success", "count": 27 }
+  }
+}
+```
+
+### Backup Viewer for File-History
+When viewing a backed-up session's "Files Changed" tab, the file content is served from
+`/backups/<date>/file-history/<session-uuid>/<hash>@v<n>` instead of the live path.
+No additional UI work needed — the existing path-based content endpoint handles this.
+
+### Changes Required (Feature 2)
+
+**`main.py`:**
+1. Update `_run_backup()` to also copy `FILE_HISTORY_BASE` into `backup_date_dir / "file-history"`
+2. For selective backups: extract session UUIDs from target project JSONL files, copy only matching subdirs
+3. Update `_safe_path()` to allow backup file-history paths too
+4. Update `backup-info.json` writer to include `file-history` domain stats
+
+**`docker-compose.yaml`:**
+- File-history volume already added in Feature 1 (read-only is fine for backup source)
+
+**`index.html`:**
+- No UI changes needed — backup viewer reuses the same Files Changed tab
+- The API returns file content from the correct path automatically
+
+### Implementation Order (Feature 2)
+1. Complete Feature 1 first (file-history viewer must work live before backing it up)
+2. Update `_run_backup()` in `main.py`
+3. Update `_safe_path()` for backup file-history paths
+4. Rebuild and test
+
+---
+
+## Backup Storage Structure (Final/Complete)
+
+```
+/mnt/linux_data/backup/claude-backups/
+  2026-03-26/
+    backup-info.json
+    projects/                         ← DONE
+      -mnt-linux-data-workspace-rag/
+        *.jsonl
+        agent-*.jsonl
+        <uuid>/subagents/...
+    file-history/                     ← Feature 2
+      <session-uuid>/
+        <hash>@v1
+        <hash>@v2
+        ...
+    settings/                         ← future
+    memory/                           ← future
+    keybindings/                      ← future
+```
+
+---
+
+## Key Decisions
+
+- **Plain directory copy** (not tar.gz) — viewer reads backup content directly, no extraction
+- **No restore UI** — backups are safety nets for manual recovery only
+- **Domain-namespaced storage** — extensible for future Claude data types
+- **Startup trigger** — handles PC-off-at-midnight case
+- **Pure asyncio midnight scheduler** — replaced APScheduler (was silently GC'd as local var)
+- **Content panel no auto-refresh** — prevents open tool blocks from collapsing mid-read
+- **file-history backed up per session UUID** — selective backup matches project → session → file-history
+- **Feature 1 must precede Feature 2** — viewer integration before backup integration
