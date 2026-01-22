@@ -1,0 +1,15 @@
+services:
+  claude-session-viewer:
+    build: .
+    container_name: claude-session-viewer
+    ports:
+      - "8888:8000"
+    volumes:
+      - /home/ahmadnurfais/.claude/projects:/claude/projects:rw
+      - /mnt/linux_data/backup/claude-backups:/backups:rw
+      - /home/ahmadnurfais/.claude/file-history:/claude/file-history:rw
+    environment:
+      - BACKUP_DIR=/backups
+      - BACKUP_RETENTION_DAYS=30
+      - FILE_HISTORY_BASE=/claude/file-history
+    restart: unless-stopped
