@@ -5,13 +5,50 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Claude Session Viewer</title>
 <style>
-  body { margin: 0; background: #0d0d0d; color: #e8e8e8; font: 14px system-ui, sans-serif; }
-  header { height: 48px; display: flex; align-items: center; padding: 0 14px; background: #161616; border-bottom: 1px solid #333; }
-  main { padding: 16px; color: #b0b0b0; }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0d0d0d; color: #e8e8e8; font: 14px system-ui, sans-serif; }
+  #app { display: grid; grid-template-columns: 220px 320px 1fr; grid-template-rows: 48px 1fr; height: 100vh; }
+  header { grid-column: 1 / -1; display: flex; align-items: center; padding: 0 14px; background: #161616; border-bottom: 1px solid #333; color: #7c9ef8; }
+  aside, main { overflow: auto; border-right: 1px solid #333; }
+  .panel-header { padding: 10px 12px; background: #161616; border-bottom: 1px solid #333; color: #707070; font-size: 11px; text-transform: uppercase; }
+  .item { padding: 10px 12px; border-bottom: 1px solid #333; cursor: pointer; }
+  .item:hover { background: #252525; }
+  #messages { padding: 12px 16px; }
 </style>
 </head>
 <body>
-<header>Claude Session Viewer</header>
-<main>Select a project and session.</main>
+<div id="app">
+  <header>Claude Session Viewer</header>
+  <aside><div class="panel-header">Projects</div><div id="projects"></div></aside>
+  <aside><div class="panel-header">Sessions</div><div id="sessions"></div></aside>
+  <main><div class="panel-header" id="title">Content</div><div id="messages">Select a session.</div></main>
+</div>
+<script>
+const el = {
+  projects: document.getElementById("projects"),
+  sessions: document.getElementById("sessions"),
+  messages: document.getElementById("messages"),
+  title: document.getElementById("title")
+};
+function esc(value) { return String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;"); }
+async function json(url) { const res = await fetch(url); if (!res.ok) throw new Error(await res.text()); return res.json(); }
+async function loadProjects() {
+  const projects = await json("/api/projects");
+  el.projects.innerHTML = projects.map(p => `<div class="item" data-id="${esc(p.id)}">${esc(p.label)}<br>${p.session_count} sessions</div>`).join("");
+}
+el.projects.addEventListener("click", async event => {
+  const item = event.target.closest(".item");
+  if (!item) return;
+  const data = await json(`/api/projects/${encodeURIComponent(item.dataset.id)}/sessions`);
+  el.sessions.innerHTML = data.sessions.map(s => `<div class="item" data-path="${esc(s.path)}">${esc(s.title)}<br>${s.record_count} records</div>`).join("");
+});
+el.sessions.addEventListener("click", async event => {
+  const item = event.target.closest(".item");
+  if (!item) return;
+  const data = await json(`/api/content?path=${encodeURIComponent(item.dataset.path)}`);
+  el.messages.innerHTML = `<pre>${esc(JSON.stringify(data.messages, null, 2))}</pre>`;
+});
+loadProjects().catch(error => { el.messages.textContent = error.message; });
+</script>
 </body>
 </html>
