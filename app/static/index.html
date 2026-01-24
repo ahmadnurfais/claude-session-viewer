@@ -6,49 +6,1835 @@
 <title>Claude Session Viewer</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: #0d0d0d; color: #e8e8e8; font: 14px system-ui, sans-serif; }
+
+  :root {
+    --bg0: #0d0d0d;
+    --bg1: #161616;
+    --bg2: #1e1e1e;
+    --bg3: #252525;
+    --bg4: #2e2e2e;
+    --border: #333;
+    --text0: #e8e8e8;
+    --text1: #b0b0b0;
+    --text2: #707070;
+    --accent: #7c9ef8;
+    --accent2: #5c7de8;
+    --user: #4caf7a;
+    --assistant: #7c9ef8;
+    --tool: #c9a84c;
+    --result: #888;
+    --danger: #e05252;
+    --danger-hover: #c03a3a;
+    --success: #4caf7a;
+    --tag-root: #5a4a8a;
+    --tag-sub: #2a6a8a;
+    --tag-orphan: #7a4a2a;
+    --backup-accent: #e8a84c;
+  }
+
+  html, body { height: 100%; background: var(--bg0); color: var(--text0); font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; }
+
+  /* ── Layout ── */
   #app { display: grid; grid-template-columns: 220px 320px 1fr; grid-template-rows: 48px 1fr; height: 100vh; }
-  header { grid-column: 1 / -1; display: flex; align-items: center; padding: 0 14px; background: #161616; border-bottom: 1px solid #333; color: #7c9ef8; }
-  aside, main { overflow: auto; border-right: 1px solid #333; }
-  .panel-header { padding: 10px 12px; background: #161616; border-bottom: 1px solid #333; color: #707070; font-size: 11px; text-transform: uppercase; }
-  .item { padding: 10px 12px; border-bottom: 1px solid #333; cursor: pointer; }
-  .item:hover { background: #252525; }
-  #messages { padding: 12px 16px; }
+
+  /* ── Header ── */
+  header {
+    grid-column: 1 / -1;
+    display: flex; align-items: center; gap: 10px;
+    padding: 0 14px;
+    background: var(--bg1);
+    border-bottom: 1px solid var(--border);
+  }
+  .logo { font-size: 15px; font-weight: 600; color: var(--accent); letter-spacing: 0.3px; margin-right: 4px; }
+
+  /* Mode toggle */
+  .mode-toggle { display: flex; gap: 2px; background: var(--bg3); border-radius: 5px; padding: 2px; }
+  .mode-btn {
+    border: none; cursor: pointer; border-radius: 3px;
+    font-size: 11px; font-weight: 600; padding: 3px 10px;
+    background: transparent; color: var(--text2);
+    transition: background 0.15s, color 0.15s;
+  }
+  .mode-btn.active { background: var(--bg1); color: var(--text0); }
+  .mode-btn.backup-mode.active { color: var(--backup-accent); }
+
+  .header-sep { width: 1px; height: 20px; background: var(--border); }
+
+  .backup-info { font-size: 11px; color: var(--text2); white-space: nowrap; }
+  .backup-info span { color: var(--text1); }
+  .backup-running-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--backup-accent); animation: pulse 1s infinite; margin-right: 4px; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+  .header-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  .ws-dot { width: 8px; height: 8px; border-radius: 50%; background: #555; transition: background 0.3s; }
+  .ws-dot.connected { background: var(--user); }
+  .ws-label { font-size: 11px; color: var(--text2); }
+
+  /* ── Panels ── */
+  #panel-projects, #panel-sessions, #panel-content {
+    overflow-y: auto;
+    border-right: 1px solid var(--border);
+  }
+  #panel-content { border-right: none; }
+
+  .panel-header {
+    position: sticky; top: 0; z-index: 10;
+    padding: 10px 12px 8px;
+    background: var(--bg1);
+    border-bottom: 1px solid var(--border);
+    font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.8px; color: var(--text2);
+  }
+  .panel-header.backup-mode { color: var(--backup-accent); }
+
+  /* ── Project list ── */
+  .project-item {
+    padding: 9px 12px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border);
+    transition: background 0.15s;
+  }
+  .project-item:hover { background: var(--bg3); }
+  .project-item.active { background: var(--bg4); border-left: 3px solid var(--accent); padding-left: 9px; }
+  .project-item.active.backup { border-left-color: var(--backup-accent); }
+  .orphan-del-btn {
+    position: absolute; top: 6px; right: 6px;
+    background: none; border: none; cursor: pointer;
+    color: var(--text2); font-size: 11px; padding: 2px 4px; border-radius: 3px; line-height: 1;
+    opacity: 0; transition: opacity 0.15s;
+  }
+  .session-item:hover .orphan-del-btn,
+  .backup-date-item:hover .orphan-del-btn { opacity: 1; }
+  .orphan-del-btn:hover { background: var(--danger); color: #fff; opacity: 1; }
+  .orphan-fh-item { border-top: 1px solid var(--border); margin-top: 4px; }
+  .orphan-fh-item .proj-label { color: var(--text2); }
+  .orphan-fh-item.active { border-left-color: #c0923a; }
+  .orphan-fh-item.active .proj-label { color: var(--text1); }
+  .proj-label { font-size: 12px; color: var(--text0); word-break: break-all; line-height: 1.4; }
+  .proj-meta { font-size: 11px; color: var(--text2); margin-top: 2px; }
+
+  /* ── Backup date list ── */
+  .backup-date-item {
+    padding: 9px 12px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border);
+    transition: background 0.15s;
+  }
+  .backup-date-item:hover { background: var(--bg3); }
+  .backup-date-item.active { background: var(--bg4); border-left: 3px solid var(--backup-accent); padding-left: 9px; }
+  .backup-date { font-size: 13px; font-weight: 600; color: var(--text0); margin-bottom: 3px; }
+  .backup-meta { font-size: 11px; color: var(--text2); display: flex; gap: 8px; align-items: center; }
+  .trigger-badge {
+    display: inline-block; padding: 1px 5px; border-radius: 3px;
+    font-size: 10px; font-weight: 600;
+  }
+  .trigger-auto    { background: #1a3a1a; color: #6fcf6f; }
+  .trigger-startup { background: #1a2a3a; color: #6fa0cf; }
+  .trigger-manual  { background: #3a2a1a; color: #cf9a6f; }
+  .trigger-unknown { background: var(--bg3); color: var(--text2); }
+
+  /* ── Sessions list ── */
+  .section-label {
+    padding: 8px 12px 4px;
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.8px; color: var(--text2);
+    background: var(--bg1);
+  }
+
+  .session-item {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .session-item:hover { background: var(--bg3); }
+  .session-item.active { background: var(--bg4); border-left: 3px solid var(--accent); padding-left: 9px; }
+
+  .session-title {
+    font-size: 12px; color: var(--text0);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    margin-bottom: 4px;
+  }
+  .session-meta { font-size: 11px; color: var(--text2); display: flex; gap: 10px; flex-wrap: wrap; }
+  .session-actions { margin-top: 6px; display: flex; gap: 6px; align-items: center; }
+
+  .agents-list { padding: 0 0 4px 0; }
+  .agent-item {
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px 12px 6px 24px;
+    cursor: pointer;
+    border-bottom: 1px solid #1e1e1e;
+    transition: background 0.15s;
+  }
+  .agent-item:hover { background: var(--bg3); }
+  .agent-item.active { background: var(--bg4); border-left: 3px solid var(--tool); padding-left: 21px; }
+  .agent-task { font-size: 11px; color: var(--text1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
+  .agent-meta { font-size: 10px; color: var(--text2); }
+
+  .tag {
+    display: inline-block; padding: 1px 6px; border-radius: 3px;
+    font-size: 10px; font-weight: 600; flex-shrink: 0;
+  }
+  .tag-root   { background: var(--tag-root);   color: #d0c0ff; }
+  .tag-sub    { background: var(--tag-sub);     color: #a0d8ff; }
+  .tag-orphan { background: var(--tag-orphan);  color: #ffcca0; }
+
+  /* ── Buttons ── */
+  .btn {
+    border: none; cursor: pointer; border-radius: 4px;
+    font-size: 11px; font-weight: 600; padding: 3px 8px;
+    transition: background 0.15s;
+  }
+  .btn-danger  { background: var(--danger); color: #fff; }
+  .btn-danger:hover { background: var(--danger-hover); }
+  .btn-ghost   { background: var(--bg4); color: var(--text1); border: 1px solid var(--border); }
+  .btn-ghost:hover { background: var(--bg3); }
+  .btn-primary { background: var(--backup-accent); color: #1a1200; }
+  .btn-primary:hover { background: #d49a3a; }
+  .btn-primary:disabled { background: var(--bg4); color: var(--text2); cursor: not-allowed; }
+
+  /* ── Content panel ── */
+  #panel-content { background: var(--bg0); padding: 0; }
+
+  .content-sticky-top {
+    position: sticky; top: 0; z-index: 10;
+    background: var(--bg1);
+  }
+  .content-header {
+    padding: 10px 16px;
+    background: var(--bg1);
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .content-title { font-size: 12px; color: var(--text1); flex: 1; word-break: break-all; min-width: 0; }
+  .content-stats { font-size: 11px; color: var(--text2); white-space: nowrap; }
+  .content-badge { font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 3px; background: #2a1f00; color: var(--backup-accent); }
+  .content-nav { display: flex; gap: 3px; }
+  .btn-nav {
+    border: none; cursor: pointer; border-radius: 4px;
+    font-size: 13px; padding: 2px 7px; line-height: 1;
+    background: var(--bg4); color: var(--text1);
+    transition: background 0.15s;
+  }
+  .btn-nav:hover { background: var(--bg3); color: var(--text0); }
+
+  #messages { padding: 12px 16px; display: flex; flex-direction: column; gap: 14px; }
+
+  .msg { border-radius: 6px; border: 1px solid var(--border); overflow: hidden; }
+  .msg-header {
+    padding: 6px 12px;
+    font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .msg-user      .msg-header { background: #1a2e22; color: var(--user); }
+  .msg-assistant .msg-header { background: #1a2035; color: var(--assistant); }
+  .msg-tool-result .msg-header { background: #1e1a2a; color: #9a7fd4; }
+  .msg-timestamp { font-size: 10px; color: var(--text2); font-weight: 400; text-transform: none; margin-left: auto; }
+  .msg-body { padding: 10px 12px; }
+
+  .block-text { white-space: pre-wrap; word-break: break-word; line-height: 1.6; font-size: 13px; color: var(--text0); }
+
+  .block-tool-use, .block-tool-result {
+    margin: 6px 0; border-radius: 4px; border: 1px solid var(--border); overflow: hidden;
+  }
+  .tool-header {
+    padding: 5px 10px; display: flex; align-items: center; gap: 8px;
+    cursor: pointer; user-select: none; background: var(--bg2);
+  }
+  .tool-header:hover { background: var(--bg3); }
+  .tool-name       { font-size: 12px; font-weight: 600; color: var(--tool); }
+  .tool-type-label { font-size: 10px; color: var(--text2); }
+  .tool-chevron    { font-size: 10px; color: var(--text2); margin-left: auto; flex-shrink: 0; }
+  .fh-jump-btn {
+    border: none; cursor: pointer; border-radius: 3px;
+    font-size: 10px; font-weight: 700; padding: 2px 6px;
+    background: rgba(92,125,232,0.15); color: var(--accent);
+    transition: background 0.15s, color 0.15s; flex-shrink: 0;
+  }
+  .fh-jump-btn:hover { background: var(--accent2); color: #fff; }
+  .tool-body {
+    display: none; padding: 8px 10px; background: var(--bg1);
+    font-size: 12px; font-family: 'Consolas', 'Monaco', monospace;
+    white-space: pre-wrap; word-break: break-word; color: var(--text1);
+    max-height: 400px; overflow-y: auto; border-top: 1px solid var(--border);
+  }
+  .tool-body.open { display: block; }
+  .tool-result-error { color: var(--danger); }
+  .block-image { padding: 4px 0; color: var(--text2); font-style: italic; font-size: 12px; }
+
+  .empty-state {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    height: 60vh; gap: 8px; color: var(--text2);
+  }
+  .empty-icon { font-size: 40px; opacity: 0.3; }
+  .empty-text { font-size: 13px; }
+
+  /* ── Modals ── */
+  .modal-overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,0.7); z-index: 100;
+    align-items: center; justify-content: center;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal {
+    background: var(--bg2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 24px; max-width: 440px; width: 90%;
+  }
+  .modal h3 { font-size: 15px; margin-bottom: 8px; }
+  .modal p  { font-size: 13px; color: var(--text1); margin-bottom: 16px; line-height: 1.5; }
+  .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+
+  /* Backup modal specific */
+  .scope-options { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+  .scope-option  { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; }
+  .scope-option input { accent-color: var(--backup-accent); width: 14px; height: 14px; cursor: pointer; }
+  .project-checklist {
+    display: none; flex-direction: column; gap: 4px;
+    max-height: 180px; overflow-y: auto;
+    padding: 8px; background: var(--bg1); border: 1px solid var(--border); border-radius: 4px;
+    margin-top: 4px;
+  }
+  .project-checklist.visible { display: flex; }
+  .check-item { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; color: var(--text1); cursor: pointer; }
+  .check-item input { accent-color: var(--backup-accent); margin-top: 2px; cursor: pointer; flex-shrink: 0; }
+  .check-label { word-break: break-all; line-height: 1.4; }
+
+  /* ── Toast ── */
+  #toast {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(80px);
+    background: var(--bg2); border: 1px solid var(--border); border-radius: 6px;
+    padding: 10px 18px; font-size: 13px; z-index: 200;
+    transition: transform 0.3s ease;
+    white-space: nowrap;
+  }
+  #toast.show { transform: translateX(-50%) translateY(0); }
+  #toast.toast-success { border-color: var(--success); color: var(--success); }
+  #toast.toast-error   { border-color: var(--danger);  color: var(--danger); }
+  #toast.toast-info    { border-color: var(--accent);  color: var(--accent); }
+
+  /* ── Scrollbar ── */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #444; }
+
+  .loader { color: var(--text2); font-size: 12px; padding: 16px; text-align: center; }
+
+  /* ── File-history tabs ── */
+  .content-tabs {
+    display: flex;
+    background: var(--bg1);
+    border-bottom: 1px solid var(--border);
+    padding: 0 12px;
+  }
+  .tab-btn {
+    background: none; border: none; cursor: pointer;
+    padding: 8px 12px; font-size: 12px; font-weight: 600;
+    color: var(--text2); border-bottom: 2px solid transparent; margin-bottom: -1px;
+    transition: color 0.15s, border-color 0.15s;
+    display: flex; align-items: center; gap: 5px;
+  }
+  .tab-btn:hover { color: var(--text0); }
+  .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab-badge {
+    font-size: 10px; padding: 1px 5px; border-radius: 10px;
+    background: var(--bg4); color: var(--text1);
+  }
+
+  /* ── Files Changed panel ── */
+  #files-changed { padding: 0; }
+  .file-entry { border-bottom: 1px solid var(--border); }
+  .file-entry-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 16px; cursor: pointer;
+    transition: background 0.15s;
+  }
+  .file-entry-header:hover { background: var(--bg2); }
+  .file-entry-header.active { background: var(--bg3); }
+  .file-entry-name { font-size: 12px; color: var(--text0); font-family: 'Consolas','Monaco',monospace; word-break: break-all; }
+  .file-entry-vcount { font-size: 11px; color: var(--text2); white-space: nowrap; margin-left: 8px; flex-shrink: 0; }
+  .file-versions-list { background: var(--bg1); padding: 8px 16px 12px; border-top: 1px solid var(--border); }
+  .version-btn {
+    display: inline-block; margin: 3px 4px 0 0;
+    padding: 3px 10px; border-radius: 3px; cursor: pointer;
+    font-size: 11px; font-weight: 600; border: 1px solid var(--border);
+    background: var(--bg3); color: var(--text1);
+    transition: background 0.15s, color 0.15s;
+  }
+  .version-btn:hover:not(:disabled) { background: var(--bg4); color: var(--text0); }
+  .version-btn.active { background: var(--accent2); color: #fff; border-color: var(--accent); }
+  .version-btn.active span { color: inherit; }
+  .ver-meta { color: var(--text2); font-size: 10px; }
+  .version-btn.active .ver-meta { color: inherit; }
+  .version-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+  .file-content-viewer {
+    margin: 10px 0 0; border-radius: 4px;
+    border: 1px solid var(--border); overflow: hidden;
+  }
+  .file-content-viewer pre {
+    padding: 10px 12px; margin: 0;
+    font-family: 'Consolas','Monaco',monospace; font-size: 12px;
+    color: var(--text1); line-height: 1.5;
+    white-space: pre-wrap; word-break: break-word;
+    max-height: 500px; overflow-y: auto;
+    background: var(--bg1);
+  }
+
+  /* ── Triggered-by context ── */
+  .triggered-by {
+    margin: 8px 0 4px; font-size: 11px; color: var(--text2);
+    line-height: 1.5; display: flex; flex-direction: column; gap: 3px;
+  }
+  .trigger-tool-badge {
+    display: inline-block; padding: 1px 7px; border-radius: 3px;
+    font-size: 10px; font-weight: 700; letter-spacing: 0.3px;
+    background: #2a1f00; color: var(--tool); margin-right: 5px;
+    vertical-align: middle;
+  }
+  .trigger-tool-row { display: flex; align-items: center; gap: 4px; }
+  .triggered-by .user-row { color: var(--text2); font-style: italic; }
+  .triggered-by .user-row strong { color: var(--text1); font-style: normal; }
+  .msg-jump-link {
+    color: var(--accent); cursor: pointer;
+    text-decoration: underline; text-underline-offset: 2px;
+    font-style: normal;
+  }
+  .msg-jump-link:hover { color: var(--text0); }
+  @keyframes msgFlash {
+    0%, 30% { box-shadow: 0 0 0 2px var(--accent); }
+    100% { box-shadow: 0 0 0 0 transparent; }
+  }
+  .msg-highlight { animation: msgFlash 1.8s ease-out forwards; border-radius: 6px; }
+
+  /* ── Content / Diff toggle ── */
+  .view-mode-toggle {
+    display: inline-flex; gap: 0; margin: 6px 0 4px;
+    border: 1px solid var(--border); border-radius: 4px; overflow: hidden;
+  }
+  .view-mode-btn {
+    background: var(--bg3); border: none; cursor: pointer;
+    padding: 3px 10px; font-size: 11px; font-weight: 600;
+    color: var(--text2); transition: background 0.15s, color 0.15s;
+  }
+  .view-mode-btn:hover:not(.active) { background: var(--bg4); color: var(--text0); }
+  .view-mode-btn.active { background: var(--accent2); color: #fff; }
+
+  /* ── Rename ── */
+  .session-title-row { display: flex; align-items: center; gap: 4px; margin-bottom: 4px; }
+  .session-title-row .session-title { margin-bottom: 0; flex: 1; min-width: 0; }
+  .rename-btn {
+    background: none; border: none; cursor: pointer;
+    color: var(--text2); font-size: 12px; padding: 1px 3px; border-radius: 3px;
+    opacity: 0; transition: opacity 0.15s; flex-shrink: 0; line-height: 1;
+  }
+  .session-item:hover .rename-btn { opacity: 1; }
+  .rename-btn:hover { color: var(--accent); opacity: 1; background: var(--bg4); }
+  .rename-input {
+    width: 100%; padding: 8px 10px; margin-top: 4px;
+    background: var(--bg1); border: 1px solid var(--border);
+    border-radius: 4px; color: var(--text0); font-size: 13px;
+  }
+  .rename-input:focus { outline: none; border-color: var(--accent); }
+
+  /* ── Diff viewer ── */
+  .diff-viewer {
+    margin: 6px 0 0; border-radius: 4px;
+    border: 1px solid var(--border);
+    overflow: auto; max-height: 500px;
+    font-family: 'Consolas','Monaco',monospace; font-size: 12px; line-height: 1.5;
+  }
+  .diff-viewer .d-hdr { padding: 2px 12px; background: var(--bg3); color: var(--text2); }
+  .diff-viewer .d-hunk { padding: 2px 12px; background: var(--bg2); color: var(--accent); }
+  .diff-viewer .d-add { padding: 2px 12px; background: rgba(76,175,80,0.12); color: #6dbf6d; white-space: pre-wrap; word-break: break-word; }
+  .diff-viewer .d-del { padding: 2px 12px; background: rgba(224,82,82,0.12); color: #d97b7b; white-space: pre-wrap; word-break: break-word; }
+  .diff-viewer .d-ctx { padding: 2px 12px; background: var(--bg1); color: var(--text1); white-space: pre-wrap; word-break: break-word; }
 </style>
 </head>
 <body>
+
 <div id="app">
-  <header>Claude Session Viewer</header>
-  <aside><div class="panel-header">Projects</div><div id="projects"></div></aside>
-  <aside><div class="panel-header">Sessions</div><div id="sessions"></div></aside>
-  <main><div class="panel-header" id="title">Content</div><div id="messages">Select a session.</div></main>
+  <header>
+    <span class="logo">Claude Session Viewer</span>
+
+    <div class="mode-toggle">
+      <button class="mode-btn active" id="btn-live" onclick="setMode('live')">Live</button>
+      <button class="mode-btn backup-mode" id="btn-backup" onclick="setMode('backup')">Backups</button>
+    </div>
+
+    <div class="header-sep"></div>
+
+    <div class="backup-info" id="backup-info">—</div>
+
+    <div class="header-right">
+      <button class="btn btn-primary" id="btn-run-backup" onclick="openBackupModal()">▶ Run Backup</button>
+      <span class="ws-label" id="ws-label">connecting…</span>
+      <span class="ws-dot" id="ws-dot"></span>
+    </div>
+  </header>
+
+  <!-- Left panel -->
+  <div id="panel-projects">
+    <div class="panel-header" id="panel-projects-header">Projects</div>
+    <div id="project-list"><div class="loader">Loading…</div></div>
+  </div>
+
+  <!-- Sessions panel -->
+  <div id="panel-sessions">
+    <div class="panel-header" id="panel-sessions-header">Sessions &amp; Agents</div>
+    <div id="session-list">
+      <div class="empty-state"><span class="empty-icon">◈</span><span class="empty-text">Select a project</span></div>
+    </div>
+  </div>
+
+  <!-- Content panel -->
+  <div id="panel-content">
+    <div id="content-area">
+      <div class="empty-state" style="height:100vh">
+        <span class="empty-icon">◈</span>
+        <span class="empty-text">Select a session or agent to view its content</span>
+      </div>
+    </div>
+  </div>
 </div>
+
+<!-- Delete confirm modal -->
+<div class="modal-overlay" id="modal-delete">
+  <div class="modal">
+    <h3 id="del-modal-title">Delete?</h3>
+    <p id="del-modal-body"></p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('modal-delete')">Cancel</button>
+      <button class="btn btn-danger" id="del-modal-confirm">Delete</button>
+    </div>
+  </div>
+</div>
+
+<!-- Rename session modal -->
+<div class="modal-overlay" id="modal-rename">
+  <div class="modal">
+    <h3>Rename Session</h3>
+    <p>Enter a new title for this session.</p>
+    <input type="text" id="rename-input" class="rename-input" placeholder="Session title…" maxlength="200">
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('modal-rename')">Cancel</button>
+      <button class="btn btn-primary" onclick="doRenameSession()">Rename</button>
+    </div>
+  </div>
+</div>
+
+<!-- Run backup modal -->
+<div class="modal-overlay" id="modal-backup">
+  <div class="modal">
+    <h3>Run Backup</h3>
+    <p>Choose which projects to back up. The backup will be stored under today's date.</p>
+    <div class="scope-options">
+      <label class="scope-option">
+        <input type="radio" name="backup-scope" value="all" checked onchange="onScopeChange()">
+        All projects
+      </label>
+      <label class="scope-option">
+        <input type="radio" name="backup-scope" value="select" onchange="onScopeChange()">
+        Select projects
+      </label>
+    </div>
+    <div class="project-checklist" id="project-checklist"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('modal-backup')">Cancel</button>
+      <button class="btn btn-primary" id="backup-confirm-btn" onclick="doRunBackup()">Start Backup</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast"></div>
+
 <script>
-const el = {
-  projects: document.getElementById("projects"),
-  sessions: document.getElementById("sessions"),
-  messages: document.getElementById("messages"),
-  title: document.getElementById("title")
+// ── State ─────────────────────────────────────────────────────────────────────
+const state = {
+  mode: 'live',               // 'live' | 'backup'
+  // live
+  projects: [],
+  activeProject: null,
+  sessions: [],
+  orphanedAgents: [],
+  expandedSessions: new Set(),
+  // backup
+  backups: [],
+  activeBackupDate: null,
+  backupProjects: [],
+  activeBackupProject: null,
+  backupSessions: [],
+  backupOrphanedAgents: [],
+  backupExpandedSessions: new Set(),
+  // shared
+  activeItemPath: null,
+  // file-history
+  fileHistoryTab: 'conversation',   // 'conversation' | 'files'
+  fileHistoryData: null,            // { session_id, files, has_file_history }
+  fileHistoryActiveFile: null,      // filename string
+  fileHistoryActiveVersion: null,   // { version, filename }
+  fileHistoryContent: null,         // raw text or 'ERROR:...'
+  fileHistoryViewMode: 'diff',      // 'content' | 'diff'
+  fileHistoryDiff: null,            // diff string or 'ERROR:...'
+  _conversationData: null,          // cached for tab switching
+  _conversationScrollTop: 0,        // saved scroll pos for conversation tab
+  // orphaned file-history
+  orphanedFH: null,                 // { orphans, count } from API
+  activeOrphanSession: null,        // session_id string
 };
-function esc(value) { return String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;"); }
-async function json(url) { const res = await fetch(url); if (!res.ok) throw new Error(await res.text()); return res.json(); }
-async function loadProjects() {
-  const projects = await json("/api/projects");
-  el.projects.innerHTML = projects.map(p => `<div class="item" data-id="${esc(p.id)}">${esc(p.label)}<br>${p.session_count} sessions</div>`).join("");
+
+// ── WebSocket ─────────────────────────────────────────────────────────────────
+let _refreshTimer = null;
+
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(`${proto}://${location.host}/ws`);
+  ws.onopen = () => {
+    document.getElementById('ws-dot').classList.add('connected');
+    document.getElementById('ws-label').textContent = 'live';
+  };
+  ws.onclose = () => {
+    document.getElementById('ws-dot').classList.remove('connected');
+    document.getElementById('ws-label').textContent = 'reconnecting…';
+    setTimeout(connectWS, 2000);
+  };
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === 'refresh') {
+      clearTimeout(_refreshTimer);
+      _refreshTimer = setTimeout(() => {
+        if (state.mode === 'live') {
+          if (state.activeProject) loadSessions(state.activeProject, true);
+        }
+        // Content panel is NOT auto-refreshed — prevents open tool blocks from collapsing.
+        // Click a session/agent again to reload its content manually.
+      }, 1500);
+    }
+    if (msg.type === 'backup_done') {
+      setBackupRunning(false);
+      loadBackupList();
+      showToast(`Backup complete (${msg.trigger}) — ${msg.date}`, 'success');
+    }
+  };
 }
-el.projects.addEventListener("click", async event => {
-  const item = event.target.closest(".item");
-  if (!item) return;
-  const data = await json(`/api/projects/${encodeURIComponent(item.dataset.id)}/sessions`);
-  el.sessions.innerHTML = data.sessions.map(s => `<div class="item" data-path="${esc(s.path)}">${esc(s.title)}<br>${s.record_count} records</div>`).join("");
-});
-el.sessions.addEventListener("click", async event => {
-  const item = event.target.closest(".item");
-  if (!item) return;
-  const data = await json(`/api/content?path=${encodeURIComponent(item.dataset.path)}`);
-  el.messages.innerHTML = `<pre>${esc(JSON.stringify(data.messages, null, 2))}</pre>`;
-});
-loadProjects().catch(error => { el.messages.textContent = error.message; });
+
+// ── API ───────────────────────────────────────────────────────────────────────
+async function api(method, url, params, body) {
+  const u = new URL(url, location.origin);
+  if (params) Object.entries(params).forEach(([k, v]) => u.searchParams.set(k, v));
+  const opts = { method };
+  if (body) { opts.body = JSON.stringify(body); opts.headers = { 'Content-Type': 'application/json' }; }
+  const r = await fetch(u, opts);
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+// ── Mode toggle ───────────────────────────────────────────────────────────────
+function setMode(mode) {
+  state.mode = mode;
+  document.getElementById('btn-live').classList.toggle('active', mode === 'live');
+  document.getElementById('btn-backup').classList.toggle('active', mode === 'backup');
+  document.getElementById('panel-projects-header').classList.toggle('backup-mode', mode === 'backup');
+  document.getElementById('panel-sessions-header').classList.toggle('backup-mode', mode === 'backup');
+
+  state.activeItemPath = null;
+  document.getElementById('content-area').innerHTML = `
+    <div class="empty-state" style="height:100vh">
+      <span class="empty-icon">◈</span>
+      <span class="empty-text">Select a ${mode === 'backup' ? 'backup date and ' : ''}session to view content</span>
+    </div>`;
+
+  if (mode === 'live') {
+    document.getElementById('panel-projects-header').textContent = 'Projects';
+    document.getElementById('panel-sessions-header').textContent = 'Sessions & Agents';
+    renderProjects();
+    document.getElementById('session-list').innerHTML = state.activeProject
+      ? '<div class="loader">Loading…</div>'
+      : '<div class="empty-state"><span class="empty-icon">◈</span><span class="empty-text">Select a project</span></div>';
+    if (state.activeProject) loadSessions(state.activeProject);
+  } else {
+    document.getElementById('panel-projects-header').textContent = 'Backup Dates';
+    document.getElementById('panel-sessions-header').textContent = 'Sessions & Agents';
+    renderBackupDates();
+    document.getElementById('session-list').innerHTML =
+      '<div class="empty-state"><span class="empty-icon">◈</span><span class="empty-text">Select a backup date and project</span></div>';
+  }
+}
+
+// ── Live: Projects ────────────────────────────────────────────────────────────
+async function loadProjects() {
+  const projects = await api('GET', '/api/projects');
+  state.projects = projects;
+  renderProjects();
+}
+
+function renderProjects() {
+  if (state.mode !== 'live') return;
+  const el = document.getElementById('project-list');
+  if (!state.projects.length) { el.innerHTML = '<div class="loader">No projects found</div>'; return; }
+  const projectsHtml = state.projects.map(p => `
+    <div class="project-item ${state.activeProject === p.id ? 'active' : ''}"
+         onclick="selectProject('${esc(p.id)}')">
+      <div class="proj-label">${esc(p.label)}</div>
+      <div class="proj-meta">${p.session_count} session${p.session_count !== 1 ? 's' : ''}</div>
+    </div>
+  `).join('');
+  const orphanCount = state.orphanedFH ? state.orphanedFH.count : '?';
+  const orphanActive = state.activeProject === '__orphaned_fh__';
+  const orphanHtml = `
+    <div class="project-item orphan-fh-item ${orphanActive ? 'active' : ''}"
+         onclick="selectOrphanedFHProject()" title="File-history sessions with no matching project">
+      <div class="proj-label">⚠ Orphaned File History</div>
+      <div class="proj-meta">${orphanCount} session${orphanCount !== 1 ? 's' : ''}</div>
+    </div>`;
+  el.innerHTML = projectsHtml + orphanHtml;
+}
+
+function selectProject(id) {
+  state.activeProject = id;
+  state.activeOrphanSession = null;
+  state.expandedSessions = new Set();
+  renderProjects();
+  loadSessions(id);
+}
+
+// ── Live: Sessions ────────────────────────────────────────────────────────────
+async function loadSessions(projectId, silent = false) {
+  if (!silent) document.getElementById('session-list').innerHTML = '<div class="loader">Loading…</div>';
+  const data = await api('GET', `/api/projects/${encodeURIComponent(projectId)}/sessions`);
+  state.sessions = data.sessions || [];
+  state.orphanedAgents = data.orphaned_agents || [];
+  renderSessions();
+}
+
+function renderSessions() {
+  if (state.mode !== 'live') return;
+  const el = document.getElementById('session-list');
+  let html = '';
+  if (state.sessions.length) {
+    html += `<div class="section-label">Sessions (${state.sessions.length})</div>`;
+    html += state.sessions.map(s => renderSession(s, false)).join('');
+  }
+  if (state.orphanedAgents.length) {
+    html += `<div class="section-label">Orphaned Agents (${state.orphanedAgents.length})</div>`;
+    html += state.orphanedAgents.map(a => renderOrphanedAgent(a, false)).join('');
+  }
+  if (!html) html = '<div class="empty-state" style="height:50vh"><span class="empty-icon">◈</span><span class="empty-text">No sessions found</span></div>';
+  el.innerHTML = html;
+}
+
+// ── Orphaned File History ─────────────────────────────────────────────────────
+async function loadOrphanedFH() {
+  const data = await api('GET', '/api/file-history/orphans');
+  state.orphanedFH = data;
+  if (state.mode === 'live') renderProjects(); // update count badge
+}
+
+async function selectOrphanedFHProject() {
+  state.activeProject = '__orphaned_fh__';
+  state.activeOrphanSession = null;
+  state.activeItemPath = null;
+  renderProjects();
+  document.getElementById('session-list').innerHTML = '<div class="loader">Loading…</div>';
+  document.getElementById('content-area').innerHTML =
+    '<div class="empty-state" style="height:100vh"><span class="empty-icon">◈</span><span class="empty-text">Select an orphaned session</span></div>';
+  if (!state.orphanedFH) await loadOrphanedFH();
+  renderOrphanedFHSessions();
+}
+
+function renderOrphanedFHSessions() {
+  const el = document.getElementById('session-list');
+  if (!state.orphanedFH || !state.orphanedFH.orphans.length) {
+    el.innerHTML = '<div class="empty-state" style="height:50vh"><span class="empty-icon">◈</span><span class="empty-text">No orphaned sessions found</span></div>';
+    return;
+  }
+  const items = state.orphanedFH.orphans.map(o => {
+    const isActive = state.activeOrphanSession === o.session_id;
+    const size = _fmtBytes(o.total_size_bytes);
+    const date = o.last_modified ? formatTimestamp(o.last_modified) : '';
+    return `
+      <div class="session-item ${isActive ? 'active' : ''}" style="position:relative"
+           onclick="selectOrphanSession('${esc(o.session_id)}')">
+        <div class="session-title" style="font-size:11px;word-break:break-all;padding-right:24px">${esc(o.session_id)}</div>
+        <div class="session-meta">
+          <span>${o.unique_file_count} file${o.unique_file_count !== 1 ? 's' : ''}</span>
+          <span>${o.snapshot_count} snapshot${o.snapshot_count !== 1 ? 's' : ''}</span>
+          <span>${size}</span>
+          ${date ? `<span>${date}</span>` : ''}
+        </div>
+        <button class="orphan-del-btn" title="Delete this orphaned session"
+                onclick="event.stopPropagation(); confirmDeleteOrphan('${esc(o.session_id)}')">✕</button>
+      </div>`;
+  }).join('');
+  el.innerHTML = `<div class="section-label">Orphaned Sessions (${state.orphanedFH.count})</div>` + items;
+}
+
+function _fmtBytes(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+// orphan viewer state
+const orphanViewer = {
+  files: null,          // [{ base, version_count, versions }]
+  activeBase: null,
+  activeVersion: null,  // { filename, version, path }
+  viewMode: 'diff',     // 'content' | 'diff'
+  content: null,
+  diff: null,
+};
+
+async function selectOrphanSession(sessionId) {
+  state.activeOrphanSession = sessionId;
+  orphanViewer.files = null;
+  orphanViewer.activeBase = null;
+  orphanViewer.activeVersion = null;
+  orphanViewer.content = null;
+  orphanViewer.diff = null;
+  renderOrphanedFHSessions();
+  renderOrphanViewer();
+  const data = await api('GET', `/api/file-history/orphans/${encodeURIComponent(sessionId)}/files`);
+  orphanViewer.files = data.files;
+  renderOrphanViewer();
+}
+
+function renderOrphanViewer() {
+  const sessionId = state.activeOrphanSession;
+  const o = state.orphanedFH && state.orphanedFH.orphans.find(x => x.session_id === sessionId);
+  if (!sessionId || !o) return;
+
+  let html = `<div style="padding:16px 20px">`;
+
+  // Header
+  html += `<div style="margin-bottom:12px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
+    <div>
+      <div style="font-size:13px;font-weight:600;color:var(--text1)">Orphaned File History</div>
+      <div style="font-size:11px;color:var(--text2);font-family:monospace;word-break:break-all;margin-top:2px">${esc(sessionId)}</div>
+    </div>
+    <button class="btn btn-danger" style="flex-shrink:0;font-size:11px;padding:4px 10px"
+            onclick="confirmDeleteOrphan('${esc(sessionId)}')">Delete</button>
+  </div>`;
+
+  if (!orphanViewer.files) {
+    html += `<div class="loader">Loading…</div></div>`;
+    document.getElementById('content-area').innerHTML = html;
+    return;
+  }
+
+  if (!orphanViewer.files.length) {
+    html += `<div style="color:var(--text2);font-size:13px">No snapshot files found.</div></div>`;
+    document.getElementById('content-area').innerHTML = html;
+    return;
+  }
+
+  // File list
+  html += `<div style="font-size:12px;color:var(--text2);margin-bottom:8px">
+    ${orphanViewer.files.length} file${orphanViewer.files.length !== 1 ? 's' : ''} tracked
+    &nbsp;·&nbsp; ${_fmtBytes(o.total_size_bytes)} total
+    &nbsp;·&nbsp; filenames are content-hashes (original paths unavailable)
+  </div>`;
+
+  for (const f of orphanViewer.files) {
+    const isActive = orphanViewer.activeBase === f.base;
+    html += `<div class="file-entry">
+      <div class="file-entry-header ${isActive ? 'active' : ''}"
+           onclick="orphanToggleFile('${esc(f.base)}')">
+        <span class="file-entry-name" style="font-family:monospace;font-size:11px">${esc(f.base)}</span>
+        <span class="file-entry-vcount">×${f.version_count} ver</span>
+      </div>`;
+
+    if (isActive) {
+      html += `<div class="file-versions-list">`;
+      for (const v of f.versions) {
+        const isActiveVer = orphanViewer.activeVersion && orphanViewer.activeVersion.filename === v.filename;
+        const date = v.modified ? formatTimestamp(v.modified) : '';
+        html += `<div class="version-btn ${isActiveVer ? 'active' : ''}"
+                      onclick="orphanSelectVersion('${esc(f.base)}', '${esc(v.filename)}', '${esc(v.path)}', ${v.version})">
+          <span>v${v.version}</span>
+          <span class="ver-meta">${_fmtBytes(v.size)}</span>
+          ${date ? `<span class="ver-meta">${date}</span>` : ''}
+        </div>`;
+      }
+      html += `</div>`;
+
+      // Viewer
+      if (orphanViewer.activeVersion && orphanViewer.activeBase === f.base) {
+        html += `<div class="view-mode-toggle">
+          <button class="view-mode-btn ${orphanViewer.viewMode === 'content' ? 'active' : ''}"
+                  onclick="orphanSetViewMode('content')">Content</button>
+          <button class="view-mode-btn ${orphanViewer.viewMode === 'diff' ? 'active' : ''}"
+                  onclick="orphanSetViewMode('diff')">Diff vs prev</button>
+        </div>`;
+
+        if (orphanViewer.viewMode === 'content') {
+          if (orphanViewer.content === null) {
+            html += `<div class="loader" style="padding:12px">Loading…</div>`;
+          } else if (orphanViewer.content.startsWith('ERROR:')) {
+            html += `<div style="color:var(--red);padding:12px;font-size:12px">${esc(orphanViewer.content)}</div>`;
+          } else {
+            html += `<pre class="file-content">${esc(orphanViewer.content)}</pre>`;
+          }
+        } else {
+          if (orphanViewer.diff === null) {
+            html += `<div class="loader" style="padding:12px">Loading…</div>`;
+          } else if (orphanViewer.diff.startsWith('ERROR:')) {
+            html += `<div style="color:var(--red);padding:12px;font-size:12px">${esc(orphanViewer.diff)}</div>`;
+          } else if (orphanViewer.diff === '') {
+            html += `<div style="padding:12px;font-size:12px;color:var(--text2)">No changes vs previous version.</div>`;
+          } else {
+            html += renderDiff(orphanViewer.diff);
+          }
+        }
+      }
+    }
+    html += `</div>`;
+  }
+
+  html += `</div>`;
+  document.getElementById('content-area').innerHTML = html;
+}
+
+function orphanToggleFile(base) {
+  if (orphanViewer.activeBase === base) {
+    orphanViewer.activeBase = null;
+    orphanViewer.activeVersion = null;
+    orphanViewer.content = null;
+    orphanViewer.diff = null;
+  } else {
+    orphanViewer.activeBase = base;
+    orphanViewer.activeVersion = null;
+    orphanViewer.content = null;
+    orphanViewer.diff = null;
+  }
+  renderOrphanViewer();
+}
+
+async function orphanSelectVersion(base, filename, path, version) {
+  orphanViewer.activeBase = base;
+  orphanViewer.activeVersion = { filename, path, version };
+  orphanViewer.viewMode = 'diff';
+  orphanViewer.content = null;
+  orphanViewer.diff = null;
+  renderOrphanViewer();
+
+  // find prev version path
+  const f = orphanViewer.files.find(ff => ff.base === base);
+  const idx = f ? f.versions.findIndex(v => v.filename === filename) : -1;
+  const prevPath = (f && idx > 0) ? f.versions[idx - 1].path : '';
+
+  try {
+    const params = { path_b: path };
+    if (prevPath) params.path_a = prevPath;
+    const result = await api('GET', '/api/file-history/diff', params);
+    orphanViewer.diff = result.diff;
+  } catch(e) {
+    orphanViewer.diff = 'ERROR:' + e.message;
+  }
+  renderOrphanViewer();
+}
+
+async function orphanSetViewMode(mode) {
+  if (orphanViewer.viewMode === mode) return;
+  orphanViewer.viewMode = mode;
+  if (mode === 'content' && orphanViewer.content === null && orphanViewer.activeVersion) {
+    renderOrphanViewer();
+    try {
+      const result = await api('GET', '/api/file-history/content', { path: orphanViewer.activeVersion.path });
+      orphanViewer.content = result.content;
+    } catch(e) {
+      orphanViewer.content = 'ERROR:' + e.message;
+    }
+  }
+  renderOrphanViewer();
+}
+
+function confirmDeleteOrphan(sessionId) {
+  document.getElementById('del-modal-title').textContent = 'Delete orphaned file history?';
+  document.getElementById('del-modal-body').textContent =
+    `This will permanently delete the file-history snapshots for session "${sessionId}" and cannot be undone.`;
+  document.getElementById('del-modal-confirm').onclick = () => { closeModal('modal-delete'); deleteOrphan(sessionId); };
+  document.getElementById('modal-delete').classList.add('open');
+}
+
+async function deleteOrphan(sessionId) {
+  try {
+    await api('DELETE', `/api/file-history/orphans/${encodeURIComponent(sessionId)}`);
+    // Remove from local state
+    if (state.orphanedFH) {
+      state.orphanedFH.orphans = state.orphanedFH.orphans.filter(o => o.session_id !== sessionId);
+      state.orphanedFH.count = state.orphanedFH.orphans.length;
+    }
+    if (state.activeOrphanSession === sessionId) {
+      state.activeOrphanSession = null;
+      orphanViewer.files = null;
+      orphanViewer.activeBase = null;
+      orphanViewer.activeVersion = null;
+      document.getElementById('content-area').innerHTML =
+        '<div class="empty-state" style="height:100vh"><span class="empty-icon">◈</span><span class="empty-text">Select an orphaned session</span></div>';
+    }
+    renderProjects();
+    renderOrphanedFHSessions();
+    showToast('Orphaned session deleted');
+  } catch(e) {
+    showToast('Delete failed: ' + e.message, true);
+  }
+}
+
+// ── Backup: Date list ─────────────────────────────────────────────────────────
+async function loadBackupList() {
+  const backups = await api('GET', '/api/backups');
+  state.backups = backups;
+  updateBackupInfo();
+  if (state.mode === 'backup') renderBackupDates();
+}
+
+function renderBackupDates() {
+  const el = document.getElementById('project-list');
+  if (!state.backups.length) {
+    el.innerHTML = '<div class="loader" style="padding:24px;text-align:center;color:var(--text2)">No backups yet</div>';
+    return;
+  }
+  el.innerHTML = state.backups.map(b => {
+    const triggerClass = `trigger-${b.trigger || 'unknown'}`;
+    const triggerLabel = b.trigger || '?';
+    const ts = b.timestamp ? formatTimestamp(b.timestamp) : '';
+    return `
+      <div class="backup-date-item ${state.activeBackupDate === b.date ? 'active' : ''}"
+           style="position:relative" onclick="selectBackupDate('${b.date}')">
+        <div class="backup-date" style="padding-right:24px">${esc(b.date)}</div>
+        <div class="backup-meta">
+          <span class="trigger-badge ${triggerClass}">${esc(triggerLabel)}</span>
+          <span>${b.project_count} project${b.project_count !== 1 ? 's' : ''}</span>
+          ${b.fh_session_count ? `<span>${b.fh_session_count} fh session${b.fh_session_count !== 1 ? 's' : ''}</span>` : ''}
+          ${ts ? `<span>${ts}</span>` : ''}
+        </div>
+        <button class="orphan-del-btn" title="Delete this backup"
+                onclick="event.stopPropagation(); confirmDeleteBackup('${esc(b.date)}')">✕</button>
+      </div>
+    `;
+  }).join('');
+}
+
+async function selectBackupDate(date) {
+  state.activeBackupDate = date;
+  state.activeBackupProject = null;
+  state.backupExpandedSessions = new Set();
+  renderBackupDates();
+  document.getElementById('session-list').innerHTML = '<div class="loader">Loading…</div>';
+  const projects = await api('GET', `/api/backups/${date}/projects`);
+  state.backupProjects = projects;
+  renderBackupProjects();
+}
+
+function confirmDeleteBackup(date) {
+  document.getElementById('del-modal-title').textContent = 'Delete entire backup?';
+  document.getElementById('del-modal-body').textContent =
+    `This will permanently delete all data in the backup for "${date}" (projects and file-history) and cannot be undone.`;
+  document.getElementById('del-modal-confirm').onclick = () => { closeModal('modal-delete'); deleteBackup(date); };
+  document.getElementById('modal-delete').classList.add('open');
+}
+
+async function deleteBackup(date) {
+  try {
+    await api('DELETE', `/api/backups/${encodeURIComponent(date)}`);
+    state.backups = state.backups.filter(b => b.date !== date);
+    if (state.activeBackupDate === date) {
+      state.activeBackupDate = null;
+      state.backupProjects = [];
+      state.backupSessions = [];
+      state.activeItemPath = null;
+      document.getElementById('session-list').innerHTML =
+        '<div class="empty-state"><span class="empty-icon">◈</span><span class="empty-text">Select a backup date and project</span></div>';
+      document.getElementById('content-area').innerHTML =
+        '<div class="empty-state" style="height:100vh"><span class="empty-icon">◈</span><span class="empty-text">Select a backup date and session to view content</span></div>';
+    }
+    updateBackupInfo();
+    renderBackupDates();
+    showToast(`Backup ${date} deleted`);
+  } catch(e) {
+    showToast('Delete failed: ' + e.message, 'error');
+  }
+}
+
+function renderBackupProjects() {
+  const el = document.getElementById('session-list');
+  if (!state.backupProjects.length) {
+    el.innerHTML = '<div class="loader">No projects in this backup</div>';
+    return;
+  }
+  let html = `<div class="section-label">Projects in ${esc(state.activeBackupDate)}</div>`;
+  html += state.backupProjects.map(p => `
+    <div class="project-item ${state.activeBackupProject === p.id ? 'active backup' : ''}"
+         onclick="selectBackupProject('${esc(p.id)}')">
+      <div class="proj-label">${esc(p.label)}</div>
+      <div class="proj-meta">${p.session_count} session${p.session_count !== 1 ? 's' : ''} · backup</div>
+    </div>
+  `).join('');
+  el.innerHTML = html;
+}
+
+async function selectBackupProject(id) {
+  state.activeBackupProject = id;
+  state.backupExpandedSessions = new Set();
+  renderBackupProjects();
+  document.getElementById('panel-sessions-header').textContent = `Sessions · ${state.activeBackupDate}`;
+  const data = await api('GET', `/api/backups/${state.activeBackupDate}/projects/${encodeURIComponent(id)}/sessions`);
+  state.backupSessions = data.sessions || [];
+  state.backupOrphanedAgents = data.orphaned_agents || [];
+  renderBackupSessions();
+}
+
+function renderBackupSessions() {
+  if (state.mode !== 'backup') return;
+  const el = document.getElementById('session-list');
+  let html = '';
+  if (state.backupSessions.length) {
+    html += `<div class="section-label">Sessions (${state.backupSessions.length})</div>`;
+    html += state.backupSessions.map(s => renderSession(s, true)).join('');
+  }
+  if (state.backupOrphanedAgents.length) {
+    html += `<div class="section-label">Orphaned Agents (${state.backupOrphanedAgents.length})</div>`;
+    html += state.backupOrphanedAgents.map(a => renderOrphanedAgent(a, true)).join('');
+  }
+  if (!html) html = '<div class="empty-state" style="height:50vh"><span class="empty-icon">◈</span><span class="empty-text">No sessions found</span></div>';
+  el.innerHTML = html;
+}
+
+// ── Shared: render session / agent ────────────────────────────────────────────
+function renderSession(s, readonly) {
+  const expandedSet = readonly ? state.backupExpandedSessions : state.expandedSessions;
+  const expanded = expandedSet.has(s.id);
+  const isActive = state.activeItemPath === s.path;
+  const size = formatBytes(s.size_bytes);
+  const time = formatTime(s.mtime);
+  const agentCount = s.agents.length;
+
+  let agentsHtml = '';
+  if (expanded && agentCount > 0) {
+    agentsHtml = `<div class="agents-list">${s.agents.map(a => renderAgent(a, readonly)).join('')}</div>`;
+  }
+
+  const deleteBtn = `
+    <button class="btn btn-danger"
+            data-path="${esc(s.path)}" data-kind="session" data-label="${esc(s.title)}"
+            onclick="confirmDeleteFromEl(this)">Delete</button>`;
+
+  const toggleBtn = agentCount ? `
+    <button class="btn btn-ghost" onclick="toggleAgents('${s.id}', ${readonly})">
+      ${expanded ? '▾ agents' : '▸ agents'}
+    </button>` : '';
+
+  return `
+    <div class="session-item ${isActive ? 'active' : ''}"
+         data-path="${esc(s.path)}" data-title="${esc(s.title)}"
+         onclick="viewFileFromEl(this)">
+      <div class="session-title-row">
+        <div class="session-title" title="${esc(s.title)}">${esc(s.title)}</div>
+        <button class="rename-btn" title="Rename session"
+                onclick="event.stopPropagation(); openRenameModal('${esc(s.path)}', '${esc(s.title)}')">✎</button>
+      </div>
+      <div class="session-meta">
+        <span>${s.message_count} msgs</span>
+        <span>${size}</span>
+        <span>${time}</span>
+        ${agentCount ? `<span style="color:var(--tool)">${agentCount} agent${agentCount>1?'s':''}</span>` : ''}
+      </div>
+      ${(!readonly || agentCount) ? `
+        <div class="session-actions" onclick="event.stopPropagation()">
+          ${toggleBtn}${deleteBtn}
+        </div>` : ''}
+    </div>
+    ${agentsHtml}
+  `;
+}
+
+function renderAgent(a, readonly) {
+  const isActive = state.activeItemPath === a.path;
+  const tagClass = a.location === 'subagents' ? 'tag-sub' : 'tag-root';
+  const tagLabel = a.location === 'subagents' ? 'sub' : 'root';
+  const typeLabel = a.agent_type ? ` · ${a.agent_type}` : '';
+  const deleteBtn = `
+    <button class="btn btn-danger" style="flex-shrink:0"
+            data-path="${esc(a.path)}" data-kind="agent" data-label="${esc(a.task)}"
+            onclick="event.stopPropagation(); confirmDeleteFromEl(this)">✕</button>`;
+  return `
+    <div class="agent-item ${isActive ? 'active' : ''}"
+         data-path="${esc(a.path)}" data-title="${esc(a.description || a.task)}"
+         onclick="viewFileFromEl(this)">
+      <span class="tag ${tagClass}">${tagLabel}</span>
+      <span class="agent-task" title="${esc(a.description || a.task)}">${esc(a.description || a.task)}</span>
+      <span class="agent-meta">${a.record_count}r${typeLabel}</span>
+      ${deleteBtn}
+    </div>
+  `;
+}
+
+function renderOrphanedAgent(a, readonly) {
+  const isActive = state.activeItemPath === a.path;
+  const deleteBtn = `
+    <button class="btn btn-danger" style="flex-shrink:0"
+            data-path="${esc(a.path)}" data-kind="agent" data-label="${esc(a.task)}"
+            onclick="event.stopPropagation(); confirmDeleteFromEl(this)">✕</button>`;
+  return `
+    <div class="agent-item ${isActive ? 'active' : ''}"
+         data-path="${esc(a.path)}" data-title="${esc(a.task)}"
+         onclick="viewFileFromEl(this)">
+      <span class="tag tag-orphan">orphan</span>
+      <span class="agent-task" title="${esc(a.task)}">${esc(a.task)}</span>
+      <span class="agent-meta">${a.record_count || ''}r</span>
+      ${deleteBtn}
+    </div>
+  `;
+}
+
+function toggleAgents(sessionId, readonly) {
+  const set = readonly ? state.backupExpandedSessions : state.expandedSessions;
+  if (set.has(sessionId)) set.delete(sessionId); else set.add(sessionId);
+  if (readonly) renderBackupSessions(); else renderSessions();
+}
+
+// ── Content ───────────────────────────────────────────────────────────────────
+function viewFileFromEl(el) {
+  viewFile(el.dataset.path, el.dataset.title);
+}
+
+async function viewFile(path, title) {
+  state.activeItemPath = path;
+  state.fileHistoryTab = 'conversation';
+  state.fileHistoryData = null;
+  state.fileHistoryActiveFile = null;
+  state.fileHistoryActiveVersion = null;
+  state.fileHistoryContent = null;
+  state.fileHistoryViewMode = 'diff';
+  state.fileHistoryDiff = null;
+  if (state.mode === 'live') renderSessions();
+  else renderBackupSessions();
+  loadContent(path);
+}
+
+async function loadContent(path, silent = false) {
+  const area = document.getElementById('content-area');
+  if (!silent) area.innerHTML = '<div class="loader" style="padding:32px">Loading…</div>';
+
+  const stem = path.split('/').pop().replace('.jsonl', '');
+  const canHaveHistory = isUUID(stem);
+
+  const [data, histData] = await Promise.all([
+    api('GET', '/api/content', { path }),
+    canHaveHistory
+      ? api('GET', '/api/file-history', { session_path: path }).catch(() => null)
+      : Promise.resolve(null),
+  ]);
+  state.fileHistoryData = histData;
+
+  renderContent(data, path);
+}
+
+function renderContent(data, path) {
+  const area = document.getElementById('content-area');
+  const filename = path.split('/').pop();
+  const isBackup = path.startsWith('/backups');
+  const msgCount = data.messages.length;
+  const hasFileHistory = state.fileHistoryData && state.fileHistoryData.has_file_history;
+
+  state._conversationData = data;
+
+  const tabHtml = hasFileHistory ? `
+    <div class="content-tabs">
+      <button class="tab-btn ${state.fileHistoryTab === 'conversation' ? 'active' : ''}"
+              onclick="switchTab('conversation')">Conversation</button>
+      <button class="tab-btn ${state.fileHistoryTab === 'files' ? 'active' : ''}"
+              onclick="switchTab('files')">Files Changed <span class="tab-badge">${state.fileHistoryData.files.length}</span></button>
+    </div>` : '';
+
+  let html = `
+    <div class="content-sticky-top">
+      <div class="content-header">
+        <span class="content-title">${esc(filename)}</span>
+        ${isBackup ? '<span class="content-badge">backup</span>' : ''}
+        <span class="content-stats">${msgCount} message${msgCount !== 1 ? 's' : ''}</span>
+        <div class="content-nav">
+          <button class="btn-nav" title="Refresh" onclick="loadContent(state.activeItemPath)">↺</button>
+          <button class="btn-nav" title="Jump to top" onclick="document.getElementById('panel-content').scrollTop=0">↑</button>
+          <button class="btn-nav" title="Jump to bottom" onclick="document.getElementById('panel-content').scrollTop=document.getElementById('panel-content').scrollHeight">↓</button>
+        </div>
+      </div>
+      ${tabHtml}
+    </div>`;
+
+  if (state.fileHistoryTab === 'files' && hasFileHistory) {
+    html += renderFilesChanged();
+  } else {
+    html += `<div id="messages">`;
+    if (!msgCount) {
+      html += `<div class="empty-state" style="height:50vh"><span class="empty-icon">◈</span><span class="empty-text">No readable messages</span></div>`;
+    } else {
+      // Pass preceding non-tool-result user uuid to each assistant message
+      // so tool_use blocks can link back to the exact file version they produced
+      const msgParts = [];
+      let lastRealUserUUID = null;
+      for (const m of data.messages) {
+        const isTROnly = m.role === 'user' && m.blocks.length > 0 && m.blocks.every(b => b.type === 'tool_result');
+        const precedingUserUUID = m.role === 'assistant' ? lastRealUserUUID : null;
+        if (m.role === 'user' && !isTROnly) lastRealUserUUID = m.uuid;
+        msgParts.push(renderMessage(m, precedingUserUUID));
+      }
+      html += msgParts.join('');
+    }
+    html += `</div>`;
+  }
+
+  area.innerHTML = html;
+}
+
+function renderMessage(m, precedingUserUUID = null) {
+  const isToolResultOnly = m.role === 'user' && m.blocks.length > 0 && m.blocks.every(b => b.type === 'tool_result');
+  const cls = isToolResultOnly ? 'msg-tool-result' : (m.role === 'user' ? 'msg-user' : 'msg-assistant');
+  const label = isToolResultOnly ? 'TOOL RESULT' : m.role.toUpperCase();
+  const ts = m.timestamp ? formatTimestamp(m.timestamp) : '';
+  const blocksHtml = m.blocks.map(b => renderBlock(b, precedingUserUUID)).join('');
+  return `
+    <div class="msg ${cls}" data-msg-uuid="${esc(m.uuid || '')}">
+      <div class="msg-header">
+        ${label}
+        ${ts ? `<span class="msg-timestamp">${ts}</span>` : ''}
+      </div>
+      <div class="msg-body">${blocksHtml}</div>
+    </div>`;
+}
+
+function renderBlock(b, precedingUserUUID = null) {
+  if (b.type === 'text') {
+    const text = b.text.trim();
+    return text ? `<div class="block-text">${esc(text)}</div>` : '';
+  }
+  if (b.type === 'tool_use') {
+    const id = uniqueId();
+    const FILE_WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+    let fhBtn = '';
+    if (FILE_WRITE_TOOLS.has(b.name) && state.fileHistoryData) {
+      const fp = (b.input && (b.input.file_path || b.input.path)) || '';
+      if (fp) {
+        const hasMatch = state.fileHistoryData.files.some(
+          f => fp === f.name || fp.endsWith('/' + f.name)
+        );
+        if (hasMatch) {
+          fhBtn = `<button class="fh-jump-btn" data-filepath="${esc(fp)}"
+                           data-user-uuid="${esc(precedingUserUUID || '')}"
+                           onclick="event.stopPropagation(); jumpToFileHistoryFile(this)"
+                           title="View in Files Changed">→ Files</button>`;
+        }
+      }
+    }
+    return `
+      <div class="block-tool-use">
+        <div class="tool-header" onclick="toggleTool('${id}')">
+          <span class="tool-type-label">tool_use</span>
+          <span class="tool-name">${esc(b.name)}</span>
+          ${fhBtn}
+          <span class="tool-chevron" id="chev-${id}">▸</span>
+        </div>
+        <div class="tool-body" id="body-${id}">${esc(JSON.stringify(b.input, null, 2))}</div>
+      </div>`;
+  }
+  if (b.type === 'tool_result') {
+    const id = uniqueId();
+    const content = typeof b.content === 'string' ? b.content : JSON.stringify(b.content, null, 2);
+    return `
+      <div class="block-tool-result">
+        <div class="tool-header" onclick="toggleTool('${id}')">
+          <span class="tool-type-label">tool_result${b.is_error ? ' · error' : ''}</span>
+          <span class="tool-name" style="color:var(--result)">${esc(b.tool_use_id.slice(0,12))}…</span>
+          <span class="tool-chevron" id="chev-${id}">▸</span>
+        </div>
+        <div class="tool-body ${b.is_error ? 'tool-result-error' : ''}" id="body-${id}">${esc(content)}</div>
+      </div>`;
+  }
+  if (b.type === 'image') return `<div class="block-image">[image]</div>`;
+  return '';
+}
+
+function toggleTool(id) {
+  const body = document.getElementById('body-' + id);
+  const chev = document.getElementById('chev-' + id);
+  body.classList.toggle('open');
+  chev.textContent = body.classList.contains('open') ? '▾' : '▸';
+}
+
+// ── File-history tabs ─────────────────────────────────────────────────────────
+function switchTab(tab) {
+  const panel = document.getElementById('panel-content');
+  // save conversation scroll before leaving it
+  if (state.fileHistoryTab === 'conversation') {
+    state._conversationScrollTop = panel ? panel.scrollTop : 0;
+  }
+  state.fileHistoryTab = tab;
+  if (state._conversationData) renderContent(state._conversationData, state.activeItemPath);
+  // restore conversation scroll when returning to it
+  if (tab === 'conversation' && panel) {
+    panel.scrollTop = state._conversationScrollTop;
+  }
+}
+
+function renderFilesChanged() {
+  const files = state.fileHistoryData.files;
+  const sessionId = state.fileHistoryData.session_id;
+
+  if (!files.length) {
+    return '<div class="empty-state" style="height:50vh"><span class="empty-icon">◈</span><span class="empty-text">No file history available</span></div>';
+  }
+
+  let html = '<div id="files-changed">';
+  for (const f of files) {
+    const isActive = state.fileHistoryActiveFile === f.name;
+    html += `
+      <div class="file-entry">
+        <div class="file-entry-header ${isActive ? 'active' : ''}"
+             data-filename="${esc(f.name)}"
+             data-file-entry="${esc(f.name)}"
+             onclick="toggleFileEntry(this)">
+          <span class="file-entry-name">${esc(f.name)}</span>
+          <span class="file-entry-vcount">×${f.version_count} ver</span>
+        </div>`;
+
+    if (isActive) {
+      html += `<div class="file-versions-list">`;
+
+      // Version pills
+      for (const v of f.versions) {
+        const isActiveVer = state.fileHistoryActiveVersion &&
+          state.fileHistoryActiveVersion.version === v.version &&
+          state.fileHistoryActiveFile === f.name;
+        const ts = v.backup_time ? ' title="' + esc(v.backup_time) + '"' : '';
+        html += `
+          <button class="version-btn ${isActiveVer ? 'active' : ''}"
+                  data-session-id="${esc(sessionId)}"
+                  data-snapshot-file="${esc(v.filename || '')}"
+                  data-version="${v.version}"
+                  data-file="${esc(f.name)}"
+                  ${!v.has_content ? 'disabled title="No content snapshot"' : ts}
+                  onclick="selectFileVersion(this)">v${v.version}</button>`;
+      }
+
+      // Content/diff area for selected version
+      if (state.fileHistoryActiveVersion && state.fileHistoryActiveFile === f.name) {
+        // Find the selected version object to get triggered_by
+        const selVer = f.versions.find(v => v.version === state.fileHistoryActiveVersion.version);
+
+        // Triggered-by context: tool + user message
+        if (selVer && selVer.triggered_by) {
+          const tb = selVer.triggered_by;
+          const toolRow = tb.tool
+            ? `<div class="trigger-tool-row"><span class="trigger-tool-badge">${esc(tb.tool)}</span> tool was used to modify this file</div>`
+            : '';
+          let userRow = '';
+          if (tb.user && tb.user.text) {
+            const userUUID = tb.user.uuid || '';
+            const label = userUUID
+              ? `<span class="msg-jump-link" data-uuid="${esc(userUUID)}" onclick="jumpToConversationMessage(this)" title="Jump to this message in Conversation">User asked:</span>`
+              : 'User asked:';
+            const preview = tb.user.text.slice(0, 120) + (tb.user.text.length > 120 ? '…' : '');
+            userRow = `<div class="user-row">${label} <strong>"${esc(preview)}"</strong></div>`;
+          }
+          if (toolRow || userRow) {
+            html += `<div class="triggered-by">${toolRow}${userRow}</div>`;
+          }
+        }
+
+        // View mode toggle
+        html += `<div class="view-mode-toggle">
+          <button class="view-mode-btn ${state.fileHistoryViewMode === 'content' ? 'active' : ''}"
+                  onclick="setFileViewMode('content')">Content</button>
+          <button class="view-mode-btn ${state.fileHistoryViewMode === 'diff' ? 'active' : ''}"
+                  onclick="setFileViewMode('diff')">Diff vs prev</button>
+        </div>`;
+
+        if (state.fileHistoryViewMode === 'content') {
+          if (state.fileHistoryContent === null) {
+            html += `<div class="loader" style="padding:8px 0;text-align:left">Loading…</div>`;
+          } else if (typeof state.fileHistoryContent === 'string' && state.fileHistoryContent.startsWith('ERROR:')) {
+            html += `<div style="color:var(--danger);font-size:12px;padding:6px 0">${esc(state.fileHistoryContent.slice(6))}</div>`;
+          } else {
+            html += `<div class="file-content-viewer"><pre>${esc(state.fileHistoryContent)}</pre></div>`;
+          }
+        } else {
+          // Diff mode
+          if (state.fileHistoryDiff === null) {
+            html += `<div class="loader" style="padding:8px 0;text-align:left">Loading diff…</div>`;
+          } else if (typeof state.fileHistoryDiff === 'string' && state.fileHistoryDiff.startsWith('ERROR:')) {
+            html += `<div style="color:var(--danger);font-size:12px;padding:6px 0">${esc(state.fileHistoryDiff.slice(6))}</div>`;
+          } else {
+            html += renderDiff(state.fileHistoryDiff);
+          }
+        }
+      }
+
+      html += `</div>`;
+    }
+
+    html += `</div>`;
+  }
+  html += '</div>';
+  return html;
+}
+
+function renderDiff(diffText) {
+  if (!diffText || !diffText.trim()) {
+    return '<div style="color:var(--text2);font-size:12px;padding:8px 0;font-style:italic">No changes (identical content)</div>';
+  }
+  let html = '<div class="diff-viewer">';
+  for (const line of diffText.split('\n')) {
+    if (!line && !html.endsWith('</div>')) continue;
+    let cls = 'd-ctx';
+    if (line.startsWith('+++') || line.startsWith('---')) cls = 'd-hdr';
+    else if (line.startsWith('@@')) cls = 'd-hunk';
+    else if (line.startsWith('+')) cls = 'd-add';
+    else if (line.startsWith('-')) cls = 'd-del';
+    html += `<div class="${cls}">${esc(line)}</div>`;
+  }
+  html += '</div>';
+  return html;
+}
+
+function toggleFileEntry(el) {
+  const name = el.dataset.filename;
+  if (state.fileHistoryActiveFile === name) {
+    state.fileHistoryActiveFile = null;
+  } else {
+    state.fileHistoryActiveFile = name;
+  }
+  state.fileHistoryActiveVersion = null;
+  state.fileHistoryContent = null;
+  state.fileHistoryViewMode = 'diff';
+  state.fileHistoryDiff = null;
+  refreshFilesChanged();
+}
+
+// ── File-history helpers ──────────────────────────────────────────────────────
+function _fhBase() {
+  const p = state.activeItemPath || '';
+  return p.startsWith('/backups/')
+    ? `/backups/${p.split('/')[2]}/file-history`
+    : '/claude/file-history';
+}
+
+function _getPrevVersion(fileName, currentVersionNum) {
+  if (!state.fileHistoryData) return null;
+  const f = state.fileHistoryData.files.find(ff => ff.name === fileName);
+  if (!f) return null;
+  const idx = f.versions.findIndex(v => v.version === currentVersionNum);
+  return idx > 0 ? f.versions[idx - 1] : null;
+}
+
+async function _fetchDiff(sessionId, curFile, prevFile) {
+  const base = _fhBase();
+  const params = { path_b: `${base}/${sessionId}/${curFile}` };
+  if (prevFile) params.path_a = `${base}/${sessionId}/${prevFile}`;
+  const result = await api('GET', '/api/file-history/diff', params);
+  return result.diff;
+}
+
+async function selectFileVersion(el) {
+  const sessionId = el.dataset.sessionId;
+  const snapshotFile = el.dataset.snapshotFile;
+  const version = parseInt(el.dataset.version);
+  const file = el.dataset.file;
+
+  if (!snapshotFile) return;
+
+  state.fileHistoryActiveFile = file;
+  state.fileHistoryActiveVersion = { version, filename: snapshotFile };
+  state.fileHistoryContent = null;
+  state.fileHistoryViewMode = 'diff';
+  state.fileHistoryDiff = null;
+  refreshFilesChanged();
+
+  const prev = _getPrevVersion(file, version);
+  try {
+    state.fileHistoryDiff = await _fetchDiff(sessionId, snapshotFile, prev && prev.filename ? prev.filename : '');
+  } catch(e) {
+    state.fileHistoryDiff = 'ERROR:' + e.message;
+  }
+  refreshFilesChanged();
+}
+
+function refreshFilesChanged() {
+  const fc = document.getElementById('files-changed');
+  if (fc) fc.outerHTML = renderFilesChanged();
+}
+
+function jumpToConversationMessage(el) {
+  const uuid = el.dataset.uuid;
+  state.fileHistoryTab = 'conversation';
+  renderContent(state._conversationData, state.activeItemPath);
+  setTimeout(() => {
+    const target = document.querySelector('[data-msg-uuid="' + uuid + '"]');
+    if (target) {
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      target.classList.add('msg-highlight');
+      setTimeout(() => target.classList.remove('msg-highlight'), 1800);
+    }
+  }, 50);
+}
+
+function jumpToFileHistoryFile(el) {
+  const filePath = el.dataset.filepath;
+  const userUUID  = el.dataset.userUuid || '';
+  if (!state.fileHistoryData) return;
+
+  const match = state.fileHistoryData.files.find(
+    f => filePath === f.name || filePath.endsWith('/' + f.name)
+  );
+  if (!match) return;
+
+  // Find the specific version produced by this user request:
+  // pick the highest-numbered content-bearing version whose triggered_by.user.uuid
+  // matches the user message that preceded the tool use.
+  let targetVersion = null;
+  if (userUUID) {
+    const candidates = match.versions.filter(
+      v => v.triggered_by && v.triggered_by.user && v.triggered_by.user.uuid === userUUID
+    );
+    // Prefer the highest version with actual content; fall back to highest without
+    targetVersion = candidates.filter(v => v.has_content).at(-1)
+                 || candidates.at(-1)
+                 || null;
+  }
+
+  state.fileHistoryTab = 'files';
+  state.fileHistoryActiveFile = match.name;
+  state.fileHistoryActiveVersion = targetVersion
+    ? { version: targetVersion.version, filename: targetVersion.filename }
+    : null;
+  state.fileHistoryContent = null;
+  state.fileHistoryViewMode = 'diff';
+  state.fileHistoryDiff = null;
+
+  renderContent(state._conversationData, state.activeItemPath);
+
+  setTimeout(() => {
+    const entry = document.querySelector('[data-file-entry="' + CSS.escape(match.name) + '"]');
+    if (entry) entry.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+    // Auto-fetch diff for the selected version
+    if (targetVersion && targetVersion.filename) {
+      const sessionId = state.fileHistoryData.session_id;
+      const prev = _getPrevVersion(match.name, targetVersion.version);
+      _fetchDiff(sessionId, targetVersion.filename, prev && prev.filename ? prev.filename : '')
+        .then(diff => { state.fileHistoryDiff = diff; refreshFilesChanged(); })
+        .catch(e => { state.fileHistoryDiff = 'ERROR:' + e.message; refreshFilesChanged(); });
+    }
+  }, 50);
+}
+
+async function setFileViewMode(mode) {
+  if (state.fileHistoryViewMode === mode) return;
+  state.fileHistoryViewMode = mode;
+
+  if (mode === 'diff' && state.fileHistoryDiff === null && state.fileHistoryActiveVersion) {
+    refreshFilesChanged();
+    const { session_id: sessionId } = state.fileHistoryData;
+    const { filename: curFile, version } = state.fileHistoryActiveVersion;
+    const prev = _getPrevVersion(state.fileHistoryActiveFile, version);
+    try {
+      state.fileHistoryDiff = await _fetchDiff(sessionId, curFile, prev && prev.filename ? prev.filename : '');
+    } catch(e) {
+      state.fileHistoryDiff = 'ERROR:' + e.message;
+    }
+  }
+
+  refreshFilesChanged();
+}
+
+// ── Rename ────────────────────────────────────────────────────────────────────
+let _renamePath = null;
+
+function openRenameModal(path, currentTitle) {
+  _renamePath = path;
+  const input = document.getElementById('rename-input');
+  input.value = currentTitle;
+  document.getElementById('modal-rename').classList.add('open');
+  setTimeout(() => { input.focus(); input.select(); }, 50);
+}
+
+async function doRenameSession() {
+  const title = document.getElementById('rename-input').value.trim();
+  if (!title) { showToast('Title cannot be empty', 'error'); return; }
+  closeModal('modal-rename');
+  try {
+    await api('POST', '/api/session/rename', null, { path: _renamePath, title });
+    if (state.mode === 'backup' && state.activeBackupDate && state.activeBackupProject) {
+      selectBackupProject(state.activeBackupProject);
+    } else if (state.activeProject) {
+      loadSessions(state.activeProject);
+    }
+    showToast('Session renamed', 'success');
+  } catch(e) {
+    showToast('Rename failed: ' + e.message, 'error');
+  }
+}
+
+// ── Delete ────────────────────────────────────────────────────────────────────
+let _pendingDelete = null;
+
+function confirmDeleteFromEl(el) {
+  _pendingDelete = el.dataset.path;
+  document.getElementById('del-modal-title').textContent = `Delete ${el.dataset.kind}?`;
+  document.getElementById('del-modal-body').textContent =
+    `This will permanently delete "${el.dataset.label}" and cannot be undone.` +
+    (el.dataset.kind === 'session' ? ' Associated subagents directory will also be removed.' : '') +
+    (state.mode === 'backup' ? ` (from backup ${state.activeBackupDate})` : '');
+  document.getElementById('del-modal-confirm').onclick = doDelete;
+  document.getElementById('modal-delete').classList.add('open');
+}
+
+async function doDelete() {
+  if (!_pendingDelete) return;
+  const path = _pendingDelete;
+  closeModal('modal-delete');
+  try {
+    await api('DELETE', '/api/file', { path });
+    if (state.activeItemPath === path) {
+      state.activeItemPath = null;
+      document.getElementById('content-area').innerHTML = `
+        <div class="empty-state" style="height:100vh">
+          <span class="empty-icon">◈</span><span class="empty-text">File deleted</span>
+        </div>`;
+    }
+    if (state.mode === 'backup' && state.activeBackupDate && state.activeBackupProject) {
+      selectBackupProject(state.activeBackupProject);
+    } else if (state.activeProject) {
+      loadSessions(state.activeProject);
+    }
+  } catch (e) {
+    showToast('Delete failed: ' + e.message, 'error');
+  }
+}
+
+// ── Backup modal ──────────────────────────────────────────────────────────────
+function openBackupModal() {
+  // Populate project checklist
+  const list = document.getElementById('project-checklist');
+  list.innerHTML = state.projects.map(p => `
+    <label class="check-item">
+      <input type="checkbox" value="${esc(p.id)}" checked>
+      <span class="check-label">${esc(p.label)}</span>
+    </label>
+  `).join('');
+  // Reset to "all"
+  document.querySelector('input[name="backup-scope"][value="all"]').checked = true;
+  list.classList.remove('visible');
+  document.getElementById('modal-backup').classList.add('open');
+}
+
+function onScopeChange() {
+  const val = document.querySelector('input[name="backup-scope"]:checked').value;
+  document.getElementById('project-checklist').classList.toggle('visible', val === 'select');
+}
+
+async function doRunBackup() {
+  const scope = document.querySelector('input[name="backup-scope"]:checked').value;
+  let projects;
+  if (scope === 'all') {
+    projects = ['all'];
+  } else {
+    projects = [...document.querySelectorAll('#project-checklist input:checked')].map(el => el.value);
+    if (!projects.length) { showToast('Select at least one project', 'error'); return; }
+  }
+  closeModal('modal-backup');
+  setBackupRunning(true);
+  try {
+    await api('POST', '/api/backups/run', null, { projects });
+    showToast('Backup started…', 'info');
+  } catch (e) {
+    setBackupRunning(false);
+    showToast('Backup failed: ' + e.message, 'error');
+  }
+}
+
+function setBackupRunning(running) {
+  const btn = document.getElementById('btn-run-backup');
+  btn.disabled = running;
+  btn.textContent = running ? '⏳ Running…' : '▶ Run Backup';
+  updateBackupInfo();
+}
+
+function updateBackupInfo() {
+  const el = document.getElementById('backup-info');
+  const btn = document.getElementById('btn-run-backup');
+  if (btn.disabled) {
+    el.innerHTML = `<span class="backup-running-dot"></span>Backup running…`;
+    return;
+  }
+  if (!state.backups.length) { el.textContent = 'No backups yet'; return; }
+  const latest = state.backups[0];
+  const label = latest.date === new Date().toISOString().slice(0,10) ? 'Today' : latest.date;
+  const triggerMap = { scheduled: 'auto', startup: 'startup', manual: 'manual' };
+  el.innerHTML = `Last backup: <span>${label}</span> · ${triggerMap[latest.trigger] || latest.trigger}`;
+}
+
+// ── Modal helpers ─────────────────────────────────────────────────────────────
+function closeModal(id) {
+  document.getElementById(id).classList.remove('open');
+}
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+let _toastTimer = null;
+function showToast(msg, type = 'info') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = `show toast-${type}`;
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => { el.classList.remove('show'); }, 3500);
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+let _uid = 0;
+function uniqueId() { return 'u' + (++_uid); }
+
+function isUUID(s) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(s);
+}
+
+function esc(str) {
+  return String(str ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function formatBytes(b) {
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+  return (b / 1048576).toFixed(1) + ' MB';
+}
+
+function formatTime(ts) {
+  const diff = (Date.now() / 1000) - ts;
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+  if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+  return Math.floor(diff / 86400) + 'd ago';
+}
+
+function formatTimestamp(ts) {
+  try {
+    return new Date(ts).toLocaleString(undefined, { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
+  } catch { return ts; }
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+connectWS();
+loadProjects();
+loadBackupList();
+loadOrphanedFH();
+
+document.getElementById('modal-delete').addEventListener('click', function(e) { if (e.target === this) closeModal('modal-delete'); });
+document.getElementById('modal-backup').addEventListener('click', function(e) { if (e.target === this) closeModal('modal-backup'); });
+document.getElementById('modal-rename').addEventListener('click', function(e) { if (e.target === this) closeModal('modal-rename'); });
+document.getElementById('rename-input').addEventListener('keydown', function(e) { if (e.key === 'Enter') doRenameSession(); if (e.key === 'Escape') closeModal('modal-rename'); });
 </script>
 </body>
 </html>
