@@ -426,6 +426,7 @@ def _build_sessions(proj: Path) -> dict:
             "size_bytes": sf.stat().st_size,
             "agents": all_agents,
             "path": str(sf),
+            "resume_command": f"claude --resume {sid}",
         })
 
     return {"sessions": sessions, "orphaned_agents": orphaned_agents}

@@ -1154,6 +1154,10 @@ function renderSession(s, readonly) {
       ${expanded ? '▾ agents' : '▸ agents'}
     </button>` : '';
 
+  const copyResumeBtn = !readonly && s.resume_command ? `
+    <button class="btn btn-ghost" data-resume-command="${esc(s.resume_command)}"
+            onclick="copyResumeCommand(this)">Copy resume</button>` : '';
+
   return `
     <div class="session-item ${isActive ? 'active' : ''}"
          data-path="${esc(s.path)}" data-title="${esc(s.title)}"
@@ -1171,7 +1175,7 @@ function renderSession(s, readonly) {
       </div>
       ${(!readonly || agentCount) ? `
         <div class="session-actions" onclick="event.stopPropagation()">
-          ${toggleBtn}${deleteBtn}
+          ${toggleBtn}${copyResumeBtn}${deleteBtn}
         </div>` : ''}
     </div>
     ${agentsHtml}
@@ -1221,6 +1225,15 @@ function toggleAgents(sessionId, readonly) {
   const set = readonly ? state.backupExpandedSessions : state.expandedSessions;
   if (set.has(sessionId)) set.delete(sessionId); else set.add(sessionId);
   if (readonly) renderBackupSessions(); else renderSessions();
+}
+
+async function copyResumeCommand(btn) {
+  const command = btn.dataset.resumeCommand || '';
+  if (!command) return;
+  await navigator.clipboard.writeText(command);
+  const old = btn.textContent;
+  btn.textContent = 'Copied';
+  setTimeout(() => { btn.textContent = old; }, 900);
 }
 
 // ── Content ───────────────────────────────────────────────────────────────────
