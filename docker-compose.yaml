@@ -10,6 +10,8 @@ services:
       - /home/ahmadnurfais/.claude/file-history:/claude/file-history:rw
     environment:
       - BACKUP_DIR=/backups
-      - BACKUP_RETENTION_DAYS=30
+      - BACKUP_RETENTION_DAYS=0
       - FILE_HISTORY_BASE=/claude/file-history
+      - AUTO_BACKUP_ENABLED=false
+      - TZ=Asia/Jakarta
     restart: unless-stopped

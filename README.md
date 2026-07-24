@@ -16,7 +16,7 @@ This project was built to make that history easier to use:
 - Browse backup copies without touching live Claude state.
 - Run startup, scheduled, and manual backups to preserve local history.
 
-The main goal is preservation. Claude Code can periodically clean up local history, and local directories can also be removed accidentally. This viewer exists so those sessions, agent runs, and file versions can be reviewed and backed up instead of disappearing as disposable local state.
+The main goal is preservation. Even if Claude cleanup is disabled, local directories can still be removed accidentally or become harder to recover later. This viewer exists so those sessions, agent runs, and file versions can be reviewed and backed up as an independent copy of the local state.
 
 ## Runtime
 
@@ -36,7 +36,7 @@ http://localhost:8888/
 
 This project was built and used on Linux. The default `docker-compose.yaml` assumes a Linux host and Linux-style bind mounts.
 
-Windows and macOS can still run it through Docker, but you may need to adjust the mounted paths, file-sharing settings, timezone, and backup directory before starting the service.
+Windows (WSL) and macOS can still run it through Docker, but you may need to adjust the mounted paths, file-sharing settings, timezone, and backup directory before starting the service.
 
 ## What It Reads
 
@@ -47,8 +47,10 @@ Windows and macOS can still run it through Docker, but you may need to adjust th
 All important paths are configurable through Docker Compose environment variables and volume mounts:
 
 - `BACKUP_DIR` controls where backups are written inside the container.
-- `BACKUP_RETENTION_DAYS` controls automatic backup pruning.
+- `BACKUP_RETENTION_DAYS` controls automatic backup pruning. Set it to a number of days, or `0` to keep backups forever.
 - `FILE_HISTORY_BASE` controls where the container reads Claude file-history snapshots.
+- `AUTO_BACKUP_ENABLED` controls startup and midnight scheduled backups. Set it to `false` to disable automatic backups while keeping manual backups available.
+- `TZ` controls the container timezone used for backup date folders and scheduled backup timing.
 
 ## Delete Behavior
 

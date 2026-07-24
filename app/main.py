@@ -25,8 +25,21 @@ app = FastAPI(title="Claude Session Viewer")
 
 PROJECTS_BASE = Path("/claude/projects")
 BACKUPS_BASE = Path(os.getenv("BACKUP_DIR", "/backups"))
-BACKUP_RETENTION_DAYS = int(os.getenv("BACKUP_RETENTION_DAYS", "30"))
 FILE_HISTORY_BASE = Path(os.getenv("FILE_HISTORY_BASE", "/claude/file-history"))
+AUTO_BACKUP_ENABLED = os.getenv("AUTO_BACKUP_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+
+
+def _parse_backup_retention_days(raw: str) -> Optional[int]:
+    try:
+        days = int(raw)
+    except ValueError as exc:
+        raise ValueError("BACKUP_RETENTION_DAYS must be an integer") from exc
+    if days < 0:
+        raise ValueError("BACKUP_RETENTION_DAYS must be >= 0")
+    return None if days == 0 else days
+
+
+BACKUP_RETENTION_DAYS = _parse_backup_retention_days(os.getenv("BACKUP_RETENTION_DAYS", "30"))
 
 UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
@@ -83,17 +96,20 @@ async def _startup():
     # Ensure backup dir exists
     BACKUPS_BASE.mkdir(parents=True, exist_ok=True)
 
-    # Startup backup: run immediately if today has no backup yet
-    today = datetime.now().strftime("%Y-%m-%d")
-    today_dir = BACKUPS_BASE / today / "projects"
-    if not today_dir.exists():
-        logging.info("BACKUP: No backup found for today (%s) — running startup backup", today)
-        asyncio.create_task(_run_backup(projects=["all"], trigger="startup"))
-    else:
-        logging.info("BACKUP: Today's backup already exists (%s), skipping startup backup", today)
+    if AUTO_BACKUP_ENABLED:
+        # Startup backup: run immediately if today has no backup yet
+        today = datetime.now().strftime("%Y-%m-%d")
+        today_dir = BACKUPS_BASE / today / "projects"
+        if not today_dir.exists():
+            logging.info("BACKUP: No backup found for today (%s) — running startup backup", today)
+            asyncio.create_task(_run_backup(projects=["all"], trigger="startup"))
+        else:
+            logging.info("BACKUP: Today's backup already exists (%s), skipping startup backup", today)
 
-    # Start the midnight scheduler as a long-lived asyncio task
-    asyncio.create_task(_midnight_scheduler())
+        # Start the midnight scheduler as a long-lived asyncio task
+        asyncio.create_task(_midnight_scheduler())
+    else:
+        logging.info("BACKUP: Automatic startup and scheduled backups are disabled")
 
 
 @app.websocket("/ws")
@@ -228,6 +244,9 @@ async def _run_backup(projects: List[str], trigger: str):
 
 def _prune_backups():
     """Delete backup date-dirs older than BACKUP_RETENTION_DAYS."""
+    if BACKUP_RETENTION_DAYS is None:
+        logging.info("BACKUP: Retention disabled; skipping automatic pruning")
+        return
     if not BACKUPS_BASE.exists():
         return
     cutoff = datetime.now().timestamp() - BACKUP_RETENTION_DAYS * 86400
