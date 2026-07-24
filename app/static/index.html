@@ -254,6 +254,16 @@
   .markdown-body pre code { background: transparent; padding: 0; }
   .markdown-body blockquote { margin: 0.4em 0 0.8em; padding-left: 10px; border-left: 3px solid var(--border); color: var(--text1); }
   .markdown-body a { color: var(--accent); }
+  .markdown-body img, .block-image img {
+    max-width: min(100%, 860px);
+    max-height: 720px;
+    object-fit: contain;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg0);
+  }
+  .block-image { display: flex; flex-direction: column; gap: 6px; padding: 4px 0; }
+  .image-fallback { color: var(--text2); font-style: italic; font-size: 12px; }
 
   .content-toggle {
     display: flex; align-items: center; gap: 5px;
@@ -1409,8 +1419,41 @@ function renderBlock(b, precedingUserUUID = null, allowMarkdown = false) {
         <div class="tool-body ${b.is_error ? 'tool-result-error' : ''}" id="body-${id}">${esc(content)}</div>
       </div>`;
   }
-  if (b.type === 'image') return `<div class="block-image">[image]</div>`;
+  if (b.type === 'image') return renderImageBlock(b);
   return '';
+}
+
+function _imageSrcFromBlock(b) {
+  if (!b || typeof b !== 'object') return '';
+  if (typeof b.src === 'string' && b.src) return b.src;
+  if (typeof b.url === 'string' && b.url) return b.url;
+  if (typeof b.image_url === 'string' && b.image_url) return b.image_url;
+  const source = b.source;
+  if (typeof source === 'string' && source) return source;
+  if (source && typeof source === 'object') {
+    if (typeof source.url === 'string' && source.url) return source.url;
+    if (source.type === 'base64' && typeof source.data === 'string' && source.data) {
+      const mime = typeof source.media_type === 'string' && source.media_type ? source.media_type : 'image/*';
+      return `data:${mime};base64,${source.data}`;
+    }
+    if (typeof source.data === 'string' && source.data && /^data:image\//.test(source.data)) return source.data;
+  }
+  return '';
+}
+
+function _safeImageSrc(src) {
+  const value = String(src || '').trim();
+  if (!value) return '';
+  if (value.startsWith('data:image/') || value.startsWith('http://') || value.startsWith('https://')) return value;
+  return '';
+}
+
+function renderImageBlock(b) {
+  const src = _safeImageSrc(_imageSrcFromBlock(b));
+  if (src) {
+    return `<div class="block-image"><img src="${esc(src)}" alt="image attachment" loading="lazy" /></div>`;
+  }
+  return `<div class="block-image"><span class="image-fallback">[image]</span></div>`;
 }
 
 function renderTextBlock(text, allowMarkdown) {
@@ -1433,6 +1476,7 @@ function renderMarkdown(text) {
     .replace(/^## (.*)$/gm, '<h2>$1</h2>')
     .replace(/^# (.*)$/gm, '<h1>$1</h1>')
     .replace(/^&gt; (.*)$/gm, '<blockquote>$1</blockquote>')
+    .replace(/!\[([^\]]*)\]\((https?:\/\/[^\s)]+|data:image\/[^"]+)\)/g, '<img src="$2" alt="$1" loading="lazy" />')
     .replace(/`([^`]+)`/g, '<code>$1</code>')
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/\*([^*]+)\*/g, '<em>$1</em>')

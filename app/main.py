@@ -750,7 +750,7 @@ def _parse_blocks(content) -> List[dict]:
                 "is_error": item.get("is_error", False),
             })
         elif t == "image":
-            blocks.append({"type": "image"})
+            blocks.append({**item})
     return blocks
 
 
