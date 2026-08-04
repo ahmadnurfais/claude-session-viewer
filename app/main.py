@@ -285,16 +285,24 @@ def read_jsonl(path: Path) -> List[dict]:
 
 
 def _first_user_title(records: List[dict]) -> str:
-    # Custom title set via /rename takes priority — use the last one found
+    # The last title record wins so Claude and viewer renames stay in sync.
     custom_title = None
     for r in records:
-        if r.get("type") == "custom-title" and r.get("customTitle"):
-            custom_title = r["customTitle"]
+        if r.get("type") == "custom-title":
+            title = r.get("customTitle")
+        elif r.get("type") == "agent-name":
+            title = r.get("agentName")
+        elif r.get("type") == "ai-title":
+            title = r.get("aiTitle")
+        else:
+            continue
+        if isinstance(title, str) and title:
+            custom_title = title
     if custom_title:
         return custom_title[:120]
 
     for r in records:
-        if r.get("type") == "user" and not r.get("isSidechain"):
+        if r.get("type") == "user" and not r.get("isSidechain") and not r.get("isMeta"):
             content = r.get("message", {}).get("content", "")
             if isinstance(content, str):
                 text = content.strip()
