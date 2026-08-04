@@ -6,3 +6,4 @@ tmp/
 .venv/
 venv/
 .vscode/
+node_modules/

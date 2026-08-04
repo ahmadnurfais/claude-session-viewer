@@ -1,0 +1,14 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:markdown": "node --test tests/markdown-renderer.test.mjs"
+  },
+  "dependencies": {
+    "dompurify": "3.4.13",
+    "marked": "18.0.8"
+  },
+  "devDependencies": {
+    "jsdom": "30.0.1"
+  }
+}
