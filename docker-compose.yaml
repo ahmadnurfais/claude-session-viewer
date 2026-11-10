@@ -1,8 +1,6 @@
 services:
   claude-session-viewer:
-    build:
-      context: .
-      network: host
+    build: .
     container_name: claude-session-viewer
     ports:
       - "8888:8000"
