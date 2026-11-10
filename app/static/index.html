@@ -35,7 +35,26 @@
   html, body { height: 100%; background: var(--bg0); color: var(--text0); font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; }
 
   /* ── Layout ── */
-  #app { display: grid; grid-template-columns: 220px 320px 1fr; grid-template-rows: 48px 1fr; height: 100vh; }
+  #app { display: grid; grid-template-columns: var(--projects-width, 220px) var(--sessions-width, 320px) minmax(0, 1fr); grid-template-rows: 48px 1fr; height: 100vh; }
+  #app.projects-collapsed { --projects-width: 40px; }
+  #app.sessions-collapsed { --sessions-width: 40px; }
+  #panel-projects, #panel-sessions, #panel-content { min-width: 0; }
+  .panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+  .panel-collapse { cursor: pointer; color: var(--text1); background: var(--bg3); border: 1px solid var(--border); border-radius: 3px; padding: 3px 7px; }
+  .panel-controls { display: flex; gap: 4px; flex-shrink: 0; }
+  .panel-collapsed .panel-controls { flex-direction: column; }
+  .panel-refresh:disabled { cursor: wait; opacity: 0.5; }
+  .panel-collapse:focus-visible, .panel-search:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .panel-search { display: block; width: 100%; margin-top: 8px; padding: 6px 8px; background: var(--bg0); color: var(--text0); border: 1px solid var(--border); border-radius: 4px; }
+  .search-count { display: block; margin-top: 5px; font-size: 10px; text-transform: none; letter-spacing: normal; }
+  .panel-collapsed .panel-label, .panel-collapsed .panel-search, .panel-collapsed .search-count, .panel-collapsed > :not(.panel-header) { display: none; }
+  .panel-collapsed .panel-header { padding: 8px 4px; }
+  .panel-collapsed .panel-heading { justify-content: center; }
+  [hidden] { display: none !important; }
+  @media (max-width: 700px) {
+    #app { --projects-width: 150px; --sessions-width: 200px; }
+    header { overflow-x: auto; }
+  }
 
   /* ── Header ── */
   header {
@@ -519,13 +538,33 @@
 
   <!-- Left panel -->
   <div id="panel-projects">
-    <div class="panel-header" id="panel-projects-header">Projects</div>
+    <div class="panel-header" id="panel-projects-header">
+      <div class="panel-heading">
+        <span class="panel-label" id="panel-projects-label">Projects</span>
+        <div class="panel-controls">
+          <button class="panel-collapse panel-refresh" id="refresh-projects" aria-label="Refresh projects" title="Refresh projects" onclick="refreshPanel('projects')">↻</button>
+          <button class="panel-collapse" id="collapse-projects" aria-label="Collapse projects" aria-expanded="true" aria-controls="project-list" onclick="togglePanel('projects')">‹</button>
+        </div>
+      </div>
+      <input class="panel-search" id="search-projects" type="search" aria-label="Search projects" placeholder="Search projects…" oninput="filterPanel('projects')">
+      <span class="search-count" id="count-projects" aria-live="polite"></span>
+    </div>
     <div id="project-list"><div class="loader">Loading…</div></div>
   </div>
 
   <!-- Sessions panel -->
   <div id="panel-sessions">
-    <div class="panel-header" id="panel-sessions-header">Sessions &amp; Agents</div>
+    <div class="panel-header" id="panel-sessions-header">
+      <div class="panel-heading">
+        <span class="panel-label" id="panel-sessions-label">Sessions &amp; Agents</span>
+        <div class="panel-controls">
+          <button class="panel-collapse panel-refresh" id="refresh-sessions" aria-label="Refresh sessions" title="Refresh selected project sessions" onclick="refreshPanel('sessions')">↻</button>
+          <button class="panel-collapse" id="collapse-sessions" aria-label="Collapse sessions" aria-expanded="true" aria-controls="session-list" onclick="togglePanel('sessions')">‹</button>
+        </div>
+      </div>
+      <input class="panel-search" id="search-sessions" type="search" aria-label="Search sessions and agents" placeholder="Search sessions…" oninput="filterPanel('sessions')">
+      <span class="search-count" id="count-sessions" aria-live="polite"></span>
+    </div>
     <div id="session-list">
       <div class="empty-state"><span class="empty-icon">◈</span><span class="empty-text">Select a project</span></div>
     </div>
@@ -680,6 +719,158 @@ async function api(method, url, params, body) {
   return r.json();
 }
 
+async function refreshPanel(panel) {
+  const button = document.getElementById(`refresh-${panel}`);
+  if (button.disabled) return;
+  const { mode, activeProject, activeBackupDate, activeBackupProject } = state;
+  const selection = () => JSON.stringify([
+    state.mode, state.activeProject, state.activeBackupDate, state.activeBackupProject,
+  ]);
+  const originalSelection = selection();
+  let url;
+  let apply;
+  if (panel === 'projects') {
+    url = mode === 'backup' ? '/api/backups' : '/api/projects';
+    apply = data => {
+      if (mode === 'backup') {
+        state.backups = data;
+        updateBackupInfo();
+        renderBackupDates();
+      } else {
+        state.projects = data;
+        renderProjects();
+      }
+    };
+  } else if (mode === 'live' && activeProject === '__orphaned_fh__') {
+    url = '/api/file-history/orphans';
+    apply = data => {
+      state.orphanedFH = data;
+      renderProjects();
+      renderOrphanedFHSessions();
+    };
+  } else if (mode === 'live' && activeProject) {
+    url = `/api/projects/${encodeURIComponent(activeProject)}/sessions`;
+    apply = data => {
+      state.sessions = data.sessions || [];
+      state.orphanedAgents = data.orphaned_agents || [];
+      renderSessions();
+    };
+  } else if (mode === 'backup' && activeBackupDate) {
+    const base = `/api/backups/${encodeURIComponent(activeBackupDate)}/projects`;
+    if (activeBackupProject) {
+      url = `${base}/${encodeURIComponent(activeBackupProject)}/sessions`;
+      apply = data => {
+        state.backupSessions = data.sessions || [];
+        state.backupOrphanedAgents = data.orphaned_agents || [];
+        renderBackupSessions();
+      };
+    } else {
+      url = base;
+      apply = data => {
+        state.backupProjects = data;
+        renderBackupProjects();
+      };
+    }
+  } else {
+    showToast(mode === 'backup' ? 'Select a backup date first' : 'Select a project first');
+    return;
+  }
+  button.disabled = true;
+  button.setAttribute('aria-busy', 'true');
+  try {
+    const data = await api('GET', url);
+    // A late response must not replace the newly selected list.
+    if (selection() === originalSelection) apply(data);
+  } catch (error) {
+    showToast('Refresh failed: ' + error.message, 'error');
+  } finally {
+    button.disabled = false;
+    button.removeAttribute('aria-busy');
+  }
+}
+
+// Search the list metadata only; transcript content remains untouched.
+function filterPanel(panel) {
+  const list = document.getElementById(panel === 'projects' ? 'project-list' : 'session-list');
+  const input = document.getElementById(`search-${panel}`);
+  const query = input.value.trim().toLocaleLowerCase();
+  const selector = '.project-item, .session-item, .agent-item, .backup-date-item';
+  const items = Array.from(list.children).filter(item => item.matches(selector));
+  let matched = 0;
+  for (const item of items) {
+    let text = `${item.textContent} ${item.dataset.path || ''} ${item.getAttribute('onclick') || ''}`;
+    const descendants = [];
+    let sibling = item.nextElementSibling;
+    while (sibling && sibling.classList.contains('agents-list')) {
+      descendants.push(sibling);
+      text += ` ${sibling.textContent}`;
+      sibling = sibling.nextElementSibling;
+    }
+    if (item.dataset.path) {
+      const sessions = state.mode === 'backup' ? state.backupSessions : state.sessions;
+      const session = sessions.find(session => session.path === item.dataset.path);
+      if (session) {
+        text += ` ${JSON.stringify({
+          id: session.id,
+          segments: (session.segments || []).map(segment => segment.id),
+          agents: session.agents,
+        })}`;
+      }
+    }
+    const visible = !query || text.toLocaleLowerCase().includes(query);
+    item.hidden = !visible;
+    for (const descendant of descendants) {
+      descendant.hidden = !visible;
+    }
+    if (visible) matched += 1;
+  }
+  document.getElementById(`count-${panel}`).textContent = `${matched} / ${items.length} shown`;
+  let empty = list.querySelector('.search-empty');
+  if (!empty) {
+    empty = document.createElement('div');
+    empty.className = 'loader search-empty';
+    empty.textContent = 'No matching results';
+    list.append(empty);
+  }
+  empty.hidden = !query || matched > 0;
+  const backupProjects = state.mode === 'backup' && !state.activeBackupProject;
+  input.placeholder = panel === 'projects'
+    ? (state.mode === 'backup' ? 'Search backup dates…' : 'Search projects…')
+    : (backupProjects ? 'Search backup projects…' : 'Search sessions…');
+}
+
+function resetSessionSearch() {
+  document.getElementById('search-sessions').value = '';
+}
+
+function togglePanel(panel, collapsed) {
+  const element = document.getElementById(`panel-${panel}`);
+  const next = collapsed === undefined ? !element.classList.contains('panel-collapsed') : collapsed;
+  element.classList.toggle('panel-collapsed', next);
+  document.getElementById('app').classList.toggle(`${panel}-collapsed`, next);
+  const button = document.getElementById(`collapse-${panel}`);
+  button.textContent = next ? '›' : '‹';
+  button.setAttribute('aria-expanded', String(!next));
+  button.setAttribute('aria-label', `${next ? 'Expand' : 'Collapse'} ${panel}`);
+  try {
+    localStorage.setItem(`viewer-${panel}-collapsed`, String(next));
+  } catch (_) {
+    // Storage is optional; panel controls remain usable without it.
+  }
+}
+
+for (const panel of ['projects', 'sessions']) {
+  let collapsed = false;
+  try {
+    collapsed = localStorage.getItem(`viewer-${panel}-collapsed`) === 'true';
+  } catch (_) {
+    // Default to expanded when browser storage is unavailable.
+  }
+  togglePanel(panel, collapsed);
+  const list = document.getElementById(panel === 'projects' ? 'project-list' : 'session-list');
+  new MutationObserver(() => filterPanel(panel)).observe(list, { childList: true });
+}
+
 // ── Mode toggle ───────────────────────────────────────────────────────────────
 function setMode(mode) {
   state.mode = mode;
@@ -696,16 +887,16 @@ function setMode(mode) {
     </div>`;
 
   if (mode === 'live') {
-    document.getElementById('panel-projects-header').textContent = 'Projects';
-    document.getElementById('panel-sessions-header').textContent = 'Sessions & Agents';
+    document.getElementById('panel-projects-label').textContent = 'Projects';
+    document.getElementById('panel-sessions-label').textContent = 'Sessions & Agents';
     renderProjects();
     document.getElementById('session-list').innerHTML = state.activeProject
       ? '<div class="loader">Loading…</div>'
       : '<div class="empty-state"><span class="empty-icon">◈</span><span class="empty-text">Select a project</span></div>';
     if (state.activeProject) loadSessions(state.activeProject);
   } else {
-    document.getElementById('panel-projects-header').textContent = 'Backup Dates';
-    document.getElementById('panel-sessions-header').textContent = 'Sessions & Agents';
+    document.getElementById('panel-projects-label').textContent = 'Backup Dates';
+    document.getElementById('panel-sessions-label').textContent = 'Sessions & Agents';
     renderBackupDates();
     document.getElementById('session-list').innerHTML =
       '<div class="empty-state"><span class="empty-icon">◈</span><span class="empty-text">Select a backup date and project</span></div>';
@@ -742,6 +933,7 @@ function renderProjects() {
 }
 
 function selectProject(id) {
+  if (state.activeProject !== id) resetSessionSearch();
   state.activeProject = id;
   state.activeOrphanSession = null;
   state.expandedSessions = new Set();
@@ -1068,6 +1260,7 @@ function renderBackupDates() {
 }
 
 async function selectBackupDate(date) {
+  resetSessionSearch();
   state.activeBackupDate = date;
   state.activeBackupProject = null;
   state.backupExpandedSessions = new Set();
@@ -1126,10 +1319,11 @@ function renderBackupProjects() {
 }
 
 async function selectBackupProject(id) {
+  if (state.activeBackupProject !== id) resetSessionSearch();
   state.activeBackupProject = id;
   state.backupExpandedSessions = new Set();
   renderBackupProjects();
-  document.getElementById('panel-sessions-header').textContent = `Sessions · ${state.activeBackupDate}`;
+  document.getElementById('panel-sessions-label').textContent = `Sessions · ${state.activeBackupDate}`;
   const data = await api('GET', `/api/backups/${state.activeBackupDate}/projects/${encodeURIComponent(id)}/sessions`);
   state.backupSessions = data.sessions || [];
   state.backupOrphanedAgents = data.orphaned_agents || [];
@@ -1160,20 +1354,38 @@ function renderSession(s, readonly) {
   const size = formatBytes(s.size_bytes);
   const time = formatTime(s.mtime);
   const agentCount = s.agents.length;
+  const grouped = (s.segments || []).length > 1;
+  let segmentsHtml = '';
+  if (grouped && expanded) {
+    segmentsHtml = `<div class="agents-list">${s.segments.map(segment => `
+      <div class="agent-item" data-path="${esc(segment.path)}" data-title="${esc(segment.title)}"
+           onclick="viewFileFromEl(this)">
+        <div>
+          <div class="agent-task">${esc(segment.id)}</div>
+          <div class="session-meta">${segment.continued_at ? `Continued ${esc(segment.continued_at)}` : 'Latest segment'}</div>
+          <div class="session-actions" onclick="event.stopPropagation()">
+            <button class="btn btn-ghost" onclick="openRenameModal('${esc(segment.path)}', '${esc(segment.title)}')">Rename segment</button>
+            ${!readonly ? `<button class="btn btn-ghost" data-resume-command="${esc(segment.resume_command)}" onclick="copyResumeCommand(this)">Copy resume</button>` : ''}
+            <button class="btn btn-danger" data-path="${esc(segment.path)}" data-kind="session"
+                    data-label="${esc(segment.id)}" onclick="confirmDeleteFromEl(this)">Delete segment</button>
+          </div>
+        </div>
+      </div>`).join('')}</div>`;
+  }
 
   let agentsHtml = '';
   if (expanded && agentCount > 0) {
     agentsHtml = `<div class="agents-list">${s.agents.map(a => renderAgent(a, readonly)).join('')}</div>`;
   }
 
-  const deleteBtn = `
+  const deleteBtn = !grouped ? `
     <button class="btn btn-danger"
             data-path="${esc(s.path)}" data-kind="session" data-label="${esc(s.title)}"
-            onclick="confirmDeleteFromEl(this)">Delete</button>`;
+            onclick="confirmDeleteFromEl(this)">Delete</button>` : '';
 
-  const toggleBtn = agentCount ? `
+  const toggleBtn = agentCount || grouped ? `
     <button class="btn btn-ghost" onclick="toggleAgents('${s.id}', ${readonly})">
-      ${expanded ? '▾ agents' : '▸ agents'}
+      ${expanded ? '▾' : '▸'} ${grouped ? `${s.segments.length} segments` : 'agents'}
     </button>` : '';
 
   const copyResumeBtn = !readonly && s.resume_command ? `
@@ -1182,24 +1394,25 @@ function renderSession(s, readonly) {
 
   return `
     <div class="session-item ${isActive ? 'active' : ''}"
-         data-path="${esc(s.path)}" data-title="${esc(s.title)}"
+         data-path="${esc(s.path)}" data-title="${esc(s.title)}" data-conversation="${grouped}"
          onclick="viewFileFromEl(this)">
       <div class="session-title-row">
         <div class="session-title" title="${esc(s.title)}">${esc(s.title)}</div>
-        <button class="rename-btn" title="Rename session"
-                onclick="event.stopPropagation(); openRenameModal('${esc(s.path)}', '${esc(s.title)}')">✎</button>
+        ${!grouped ? `<button class="rename-btn" title="Rename session"
+                onclick="event.stopPropagation(); openRenameModal('${esc(s.path)}', '${esc(s.title)}')">✎</button>` : ''}
       </div>
       <div class="session-meta">
-        <span>${s.message_count} msgs</span>
+        <span>${s.message_count} human msgs</span>
         <span>${size}</span>
         <span>${time}</span>
         ${agentCount ? `<span style="color:var(--tool)">${agentCount} agent${agentCount>1?'s':''}</span>` : ''}
       </div>
-      ${(!readonly || agentCount) ? `
+      ${(!readonly || agentCount || grouped) ? `
         <div class="session-actions" onclick="event.stopPropagation()">
           ${toggleBtn}${copyResumeBtn}${deleteBtn}
         </div>` : ''}
     </div>
+    ${segmentsHtml}
     ${agentsHtml}
   `;
 }
@@ -1260,10 +1473,11 @@ async function copyResumeCommand(btn) {
 
 // ── Content ───────────────────────────────────────────────────────────────────
 function viewFileFromEl(el) {
-  viewFile(el.dataset.path, el.dataset.title);
+  viewFile(el.dataset.path, el.dataset.title, el.dataset.conversation === 'true');
 }
 
-async function viewFile(path, title) {
+async function viewFile(path, title, conversation = false) {
+  state.activeConversation = conversation;
   state.activeItemPath = path;
   state.fileHistoryTab = 'conversation';
   state.fileHistoryData = null;
@@ -1282,10 +1496,10 @@ async function loadContent(path, silent = false) {
   if (!silent) area.innerHTML = '<div class="loader" style="padding:32px">Loading…</div>';
 
   const stem = path.split('/').pop().replace('.jsonl', '');
-  const canHaveHistory = isUUID(stem);
+  const canHaveHistory = isUUID(stem) && !state.activeConversation;
 
   const [data, histData] = await Promise.all([
-    api('GET', '/api/content', { path }),
+    api('GET', '/api/content', { path, conversation: state.activeConversation ? 'true' : 'false' }),
     canHaveHistory
       ? api('GET', '/api/file-history', { session_path: path }).catch(() => null)
       : Promise.resolve(null),
@@ -1315,7 +1529,7 @@ function renderContent(data, path) {
   let html = `
     <div class="content-sticky-top">
       <div class="content-header">
-        <span class="content-title">${esc(filename)}</span>
+        <span class="content-title">${state.activeConversation ? 'Merged conversation · select a segment for file history' : esc(filename)}</span>
         ${isBackup ? '<span class="content-badge">backup</span>' : ''}
         <span class="content-stats">${msgCount} message${msgCount !== 1 ? 's' : ''}</span>
         <label class="content-toggle" title="Render user and assistant text as Markdown">
