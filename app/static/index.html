@@ -35,7 +35,23 @@
   html, body { height: 100%; background: var(--bg0); color: var(--text0); font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; }
 
   /* ── Layout ── */
-  #app { display: grid; grid-template-columns: 220px 320px 1fr; grid-template-rows: 48px 1fr; height: 100vh; }
+  #app { display: grid; grid-template-columns: var(--projects-width, 220px) var(--sessions-width, 320px) minmax(0, 1fr); grid-template-rows: 48px 1fr; height: 100vh; }
+  #app.projects-collapsed { --projects-width: 40px; }
+  #app.sessions-collapsed { --sessions-width: 40px; }
+  #panel-projects, #panel-sessions, #panel-content { min-width: 0; }
+  .panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+  .panel-collapse { cursor: pointer; color: var(--text1); background: var(--bg3); border: 1px solid var(--border); border-radius: 3px; padding: 3px 7px; }
+  .panel-collapse:focus-visible, .panel-search:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .panel-search { display: block; width: 100%; margin-top: 8px; padding: 6px 8px; background: var(--bg0); color: var(--text0); border: 1px solid var(--border); border-radius: 4px; }
+  .search-count { display: block; margin-top: 5px; font-size: 10px; text-transform: none; letter-spacing: normal; }
+  .panel-collapsed .panel-label, .panel-collapsed .panel-search, .panel-collapsed .search-count, .panel-collapsed > :not(.panel-header) { display: none; }
+  .panel-collapsed .panel-header { padding: 8px 4px; }
+  .panel-collapsed .panel-heading { justify-content: center; }
+  [hidden] { display: none !important; }
+  @media (max-width: 700px) {
+    #app { --projects-width: 150px; --sessions-width: 200px; }
+    header { overflow-x: auto; }
+  }
 
   /* ── Header ── */
   header {
@@ -519,13 +535,27 @@
 
   <!-- Left panel -->
   <div id="panel-projects">
-    <div class="panel-header" id="panel-projects-header">Projects</div>
+    <div class="panel-header" id="panel-projects-header">
+      <div class="panel-heading">
+        <span class="panel-label" id="panel-projects-label">Projects</span>
+        <button class="panel-collapse" id="collapse-projects" aria-label="Collapse projects" aria-expanded="true" aria-controls="project-list" onclick="togglePanel('projects')">‹</button>
+      </div>
+      <input class="panel-search" id="search-projects" type="search" aria-label="Search projects" placeholder="Search projects…" oninput="filterPanel('projects')">
+      <span class="search-count" id="count-projects" aria-live="polite"></span>
+    </div>
     <div id="project-list"><div class="loader">Loading…</div></div>
   </div>
 
   <!-- Sessions panel -->
   <div id="panel-sessions">
-    <div class="panel-header" id="panel-sessions-header">Sessions &amp; Agents</div>
+    <div class="panel-header" id="panel-sessions-header">
+      <div class="panel-heading">
+        <span class="panel-label" id="panel-sessions-label">Sessions &amp; Agents</span>
+        <button class="panel-collapse" id="collapse-sessions" aria-label="Collapse sessions" aria-expanded="true" aria-controls="session-list" onclick="togglePanel('sessions')">‹</button>
+      </div>
+      <input class="panel-search" id="search-sessions" type="search" aria-label="Search sessions and agents" placeholder="Search sessions…" oninput="filterPanel('sessions')">
+      <span class="search-count" id="count-sessions" aria-live="polite"></span>
+    </div>
     <div id="session-list">
       <div class="empty-state"><span class="empty-icon">◈</span><span class="empty-text">Select a project</span></div>
     </div>
@@ -680,6 +710,88 @@ async function api(method, url, params, body) {
   return r.json();
 }
 
+// Search the list metadata only; transcript content remains untouched.
+function filterPanel(panel) {
+  const list = document.getElementById(panel === 'projects' ? 'project-list' : 'session-list');
+  const input = document.getElementById(`search-${panel}`);
+  const query = input.value.trim().toLocaleLowerCase();
+  const selector = '.project-item, .session-item, .agent-item, .backup-date-item';
+  const items = Array.from(list.children).filter(item => item.matches(selector));
+  let matched = 0;
+  for (const item of items) {
+    let text = `${item.textContent} ${item.dataset.path || ''} ${item.getAttribute('onclick') || ''}`;
+    const descendants = [];
+    let sibling = item.nextElementSibling;
+    while (sibling && sibling.classList.contains('agents-list')) {
+      descendants.push(sibling);
+      text += ` ${sibling.textContent}`;
+      sibling = sibling.nextElementSibling;
+    }
+    if (item.dataset.path) {
+      const sessions = state.mode === 'backup' ? state.backupSessions : state.sessions;
+      const session = sessions.find(session => session.path === item.dataset.path);
+      if (session) {
+        text += ` ${JSON.stringify({
+          id: session.id,
+          segments: (session.segments || []).map(segment => segment.id),
+          agents: session.agents,
+        })}`;
+      }
+    }
+    const visible = !query || text.toLocaleLowerCase().includes(query);
+    item.hidden = !visible;
+    for (const descendant of descendants) {
+      descendant.hidden = !visible;
+    }
+    if (visible) matched += 1;
+  }
+  document.getElementById(`count-${panel}`).textContent = `${matched} / ${items.length} shown`;
+  let empty = list.querySelector('.search-empty');
+  if (!empty) {
+    empty = document.createElement('div');
+    empty.className = 'loader search-empty';
+    empty.textContent = 'No matching results';
+    list.append(empty);
+  }
+  empty.hidden = !query || matched > 0;
+  const backupProjects = state.mode === 'backup' && !state.activeBackupProject;
+  input.placeholder = panel === 'projects'
+    ? (state.mode === 'backup' ? 'Search backup dates…' : 'Search projects…')
+    : (backupProjects ? 'Search backup projects…' : 'Search sessions…');
+}
+
+function resetSessionSearch() {
+  document.getElementById('search-sessions').value = '';
+}
+
+function togglePanel(panel, collapsed) {
+  const element = document.getElementById(`panel-${panel}`);
+  const next = collapsed === undefined ? !element.classList.contains('panel-collapsed') : collapsed;
+  element.classList.toggle('panel-collapsed', next);
+  document.getElementById('app').classList.toggle(`${panel}-collapsed`, next);
+  const button = document.getElementById(`collapse-${panel}`);
+  button.textContent = next ? '›' : '‹';
+  button.setAttribute('aria-expanded', String(!next));
+  button.setAttribute('aria-label', `${next ? 'Expand' : 'Collapse'} ${panel}`);
+  try {
+    localStorage.setItem(`viewer-${panel}-collapsed`, String(next));
+  } catch (_) {
+    // Storage is optional; panel controls remain usable without it.
+  }
+}
+
+for (const panel of ['projects', 'sessions']) {
+  let collapsed = false;
+  try {
+    collapsed = localStorage.getItem(`viewer-${panel}-collapsed`) === 'true';
+  } catch (_) {
+    // Default to expanded when browser storage is unavailable.
+  }
+  togglePanel(panel, collapsed);
+  const list = document.getElementById(panel === 'projects' ? 'project-list' : 'session-list');
+  new MutationObserver(() => filterPanel(panel)).observe(list, { childList: true });
+}
+
 // ── Mode toggle ───────────────────────────────────────────────────────────────
 function setMode(mode) {
   state.mode = mode;
@@ -696,16 +808,16 @@ function setMode(mode) {
     </div>`;
 
   if (mode === 'live') {
-    document.getElementById('panel-projects-header').textContent = 'Projects';
-    document.getElementById('panel-sessions-header').textContent = 'Sessions & Agents';
+    document.getElementById('panel-projects-label').textContent = 'Projects';
+    document.getElementById('panel-sessions-label').textContent = 'Sessions & Agents';
     renderProjects();
     document.getElementById('session-list').innerHTML = state.activeProject
       ? '<div class="loader">Loading…</div>'
       : '<div class="empty-state"><span class="empty-icon">◈</span><span class="empty-text">Select a project</span></div>';
     if (state.activeProject) loadSessions(state.activeProject);
   } else {
-    document.getElementById('panel-projects-header').textContent = 'Backup Dates';
-    document.getElementById('panel-sessions-header').textContent = 'Sessions & Agents';
+    document.getElementById('panel-projects-label').textContent = 'Backup Dates';
+    document.getElementById('panel-sessions-label').textContent = 'Sessions & Agents';
     renderBackupDates();
     document.getElementById('session-list').innerHTML =
       '<div class="empty-state"><span class="empty-icon">◈</span><span class="empty-text">Select a backup date and project</span></div>';
@@ -742,6 +854,7 @@ function renderProjects() {
 }
 
 function selectProject(id) {
+  if (state.activeProject !== id) resetSessionSearch();
   state.activeProject = id;
   state.activeOrphanSession = null;
   state.expandedSessions = new Set();
@@ -1068,6 +1181,7 @@ function renderBackupDates() {
 }
 
 async function selectBackupDate(date) {
+  resetSessionSearch();
   state.activeBackupDate = date;
   state.activeBackupProject = null;
   state.backupExpandedSessions = new Set();
@@ -1126,10 +1240,11 @@ function renderBackupProjects() {
 }
 
 async function selectBackupProject(id) {
+  if (state.activeBackupProject !== id) resetSessionSearch();
   state.activeBackupProject = id;
   state.backupExpandedSessions = new Set();
   renderBackupProjects();
-  document.getElementById('panel-sessions-header').textContent = `Sessions · ${state.activeBackupDate}`;
+  document.getElementById('panel-sessions-label').textContent = `Sessions · ${state.activeBackupDate}`;
   const data = await api('GET', `/api/backups/${state.activeBackupDate}/projects/${encodeURIComponent(id)}/sessions`);
   state.backupSessions = data.sessions || [];
   state.backupOrphanedAgents = data.orphaned_agents || [];
