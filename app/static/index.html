@@ -1496,12 +1496,12 @@ async function loadContent(path, silent = false) {
   if (!silent) area.innerHTML = '<div class="loader" style="padding:32px">Loading…</div>';
 
   const stem = path.split('/').pop().replace('.jsonl', '');
-  const canHaveHistory = isUUID(stem) && !state.activeConversation;
+  const canHaveHistory = isUUID(stem);
 
   const [data, histData] = await Promise.all([
     api('GET', '/api/content', { path, conversation: state.activeConversation ? 'true' : 'false' }),
     canHaveHistory
-      ? api('GET', '/api/file-history', { session_path: path }).catch(() => null)
+      ? api('GET', '/api/file-history', { session_path: path, conversation: state.activeConversation ? 'true' : 'false' }).catch(() => null)
       : Promise.resolve(null),
   ]);
   state.fileHistoryData = histData;
@@ -1529,7 +1529,7 @@ function renderContent(data, path) {
   let html = `
     <div class="content-sticky-top">
       <div class="content-header">
-        <span class="content-title">${state.activeConversation ? 'Merged conversation · select a segment for file history' : esc(filename)}</span>
+        <span class="content-title">${state.activeConversation ? 'Merged conversation' : esc(filename)}</span>
         ${isBackup ? '<span class="content-badge">backup</span>' : ''}
         <span class="content-stats">${msgCount} message${msgCount !== 1 ? 's' : ''}</span>
         <label class="content-toggle" title="Render user and assistant text as Markdown">
@@ -1763,15 +1763,19 @@ function renderFilesChanged() {
         const isActiveVer = state.fileHistoryActiveVersion &&
           state.fileHistoryActiveVersion.version === v.version &&
           state.fileHistoryActiveFile === f.name;
-        const ts = v.backup_time ? ' title="' + esc(v.backup_time) + '"' : '';
+        const source = v.source_session_id || sessionId;
+        const label = v.source_session_id
+          ? `${source.slice(0, 8)} · v${v.source_version}`
+          : `v${v.version}`;
+        const details = [v.backup_time, source, !v.has_content ? 'Snapshot unavailable' : ''].filter(Boolean).join(' · ');
         html += `
           <button class="version-btn ${isActiveVer ? 'active' : ''}"
-                  data-session-id="${esc(sessionId)}"
+                  data-session-id="${esc(source)}"
                   data-snapshot-file="${esc(v.filename || '')}"
                   data-version="${v.version}"
                   data-file="${esc(f.name)}"
-                  ${!v.has_content ? 'disabled title="No content snapshot"' : ts}
-                  onclick="selectFileVersion(this)">v${v.version}</button>`;
+                  ${!v.has_content ? 'disabled' : ''} title="${esc(details)}"
+                  onclick="selectFileVersion(this)">${esc(label)}</button>`;
       }
 
       // Content/diff area for selected version
@@ -1884,10 +1888,10 @@ function _getPrevVersion(fileName, currentVersionNum) {
   return idx > 0 ? f.versions[idx - 1] : null;
 }
 
-async function _fetchDiff(sessionId, curFile, prevFile) {
+async function _fetchDiff(sessionId, curFile, prevFile, previousSessionId = sessionId) {
   const base = _fhBase();
   const params = { path_b: `${base}/${sessionId}/${curFile}` };
-  if (prevFile) params.path_a = `${base}/${sessionId}/${prevFile}`;
+  if (prevFile) params.path_a = `${base}/${previousSessionId}/${prevFile}`;
   const result = await api('GET', '/api/file-history/diff', params);
   return result.diff;
 }
@@ -1901,7 +1905,7 @@ async function selectFileVersion(el) {
   if (!snapshotFile) return;
 
   state.fileHistoryActiveFile = file;
-  state.fileHistoryActiveVersion = { version, filename: snapshotFile };
+  state.fileHistoryActiveVersion = { version, filename: snapshotFile, source_session_id: sessionId };
   state.fileHistoryContent = null;
   state.fileHistoryViewMode = 'diff';
   state.fileHistoryDiff = null;
@@ -1909,7 +1913,7 @@ async function selectFileVersion(el) {
 
   const prev = _getPrevVersion(file, version);
   try {
-    state.fileHistoryDiff = await _fetchDiff(sessionId, snapshotFile, prev && prev.filename ? prev.filename : '');
+    state.fileHistoryDiff = await _fetchDiff(sessionId, snapshotFile, prev && prev.filename ? prev.filename : '', prev?.source_session_id || sessionId);
   } catch(e) {
     state.fileHistoryDiff = 'ERROR:' + e.message;
   }
@@ -1962,7 +1966,7 @@ function jumpToFileHistoryFile(el) {
   state.fileHistoryTab = 'files';
   state.fileHistoryActiveFile = match.name;
   state.fileHistoryActiveVersion = targetVersion
-    ? { version: targetVersion.version, filename: targetVersion.filename }
+    ? { ...targetVersion }
     : null;
   state.fileHistoryContent = null;
   state.fileHistoryViewMode = 'diff';
@@ -1975,10 +1979,10 @@ function jumpToFileHistoryFile(el) {
     if (entry) entry.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
     // Auto-fetch diff for the selected version
-    if (targetVersion && targetVersion.filename) {
-      const sessionId = state.fileHistoryData.session_id;
+    if (targetVersion && targetVersion.has_content) {
+      const sessionId = targetVersion.source_session_id || state.fileHistoryData.session_id;
       const prev = _getPrevVersion(match.name, targetVersion.version);
-      _fetchDiff(sessionId, targetVersion.filename, prev && prev.filename ? prev.filename : '')
+      _fetchDiff(sessionId, targetVersion.filename, prev && prev.filename ? prev.filename : '', prev?.source_session_id || sessionId)
         .then(diff => { state.fileHistoryDiff = diff; refreshFilesChanged(); })
         .catch(e => { state.fileHistoryDiff = 'ERROR:' + e.message; refreshFilesChanged(); });
     }
@@ -1989,13 +1993,27 @@ async function setFileViewMode(mode) {
   if (state.fileHistoryViewMode === mode) return;
   state.fileHistoryViewMode = mode;
 
+  if (mode === 'content' && state.fileHistoryContent === null && state.fileHistoryActiveVersion) {
+    refreshFilesChanged();
+    const version = state.fileHistoryActiveVersion;
+    const sessionId = version.source_session_id || state.fileHistoryData.session_id;
+    try {
+      const result = await api('GET', '/api/file-history/content', {
+        path: `${_fhBase()}/${sessionId}/${version.filename}`,
+      });
+      state.fileHistoryContent = result.content;
+    } catch (error) {
+      state.fileHistoryContent = 'ERROR:' + error.message;
+    }
+  }
+
   if (mode === 'diff' && state.fileHistoryDiff === null && state.fileHistoryActiveVersion) {
     refreshFilesChanged();
-    const { session_id: sessionId } = state.fileHistoryData;
+    const sessionId = state.fileHistoryActiveVersion.source_session_id || state.fileHistoryData.session_id;
     const { filename: curFile, version } = state.fileHistoryActiveVersion;
     const prev = _getPrevVersion(state.fileHistoryActiveFile, version);
     try {
-      state.fileHistoryDiff = await _fetchDiff(sessionId, curFile, prev && prev.filename ? prev.filename : '');
+      state.fileHistoryDiff = await _fetchDiff(sessionId, curFile, prev && prev.filename ? prev.filename : '', prev?.source_session_id || sessionId);
     } catch(e) {
       state.fileHistoryDiff = 'ERROR:' + e.message;
     }

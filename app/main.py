@@ -970,14 +970,77 @@ def get_file_history_diff(path_b: str = Query(...), path_a: str = Query(default=
     return {"diff": "".join(diff_lines), "unchanged": not bool(diff_lines)}
 
 
+def _get_conversation_files(session_path: Path) -> dict:
+    records_by_id = {
+        candidate.stem: read_jsonl(candidate)
+        for candidate in session_path.parent.glob("*.jsonl")
+        if is_uuid(candidate.stem)
+    }
+    chain = next((
+        chain for chain in _continuation_chains(records_by_id)
+        if session_path.stem in chain
+    ), [session_path.stem])
+    try:
+        relative = session_path.resolve().relative_to(BACKUPS_BASE.resolve())
+        history_base = BACKUPS_BASE / relative.parts[0] / "file-history"
+    except ValueError:
+        history_base = FILE_HISTORY_BASE
+
+    files = {}
+    for segment_index, sid in enumerate(chain):
+        history = _get_session_files(session_path.parent / f"{sid}.jsonl")
+        for file in history["files"]:
+            versions = files.setdefault(file["name"], {})
+            for version in file["versions"]:
+                identity = (
+                    version["filename"], version["version"], version["backup_time"],
+                )
+                available = False
+                if version["filename"]:
+                    candidate = history_base / sid / version["filename"]
+                    try:
+                        candidate = _safe_path(candidate)
+                        available = candidate.is_file()
+                    except HTTPException:
+                        pass
+                entry = {
+                    **version,
+                    "source_session_id": sid,
+                    "source_version": version["version"],
+                    "has_content": available,
+                    "segment_index": segment_index,
+                }
+                existing = versions.get(identity)
+                if existing is None or (available and not existing["has_content"]):
+                    versions[identity] = entry
+
+    result = []
+    for name, versions in sorted(files.items()):
+        ordered = sorted(versions.values(), key=lambda version: (
+            _message_time({"timestamp": version["backup_time"]}) or 0,
+            version["segment_index"],
+            version["source_version"],
+        ))
+        for index, version in enumerate(ordered, 1):
+            version["version"] = index
+            del version["segment_index"]
+        result.append({"name": name, "version_count": len(ordered), "versions": ordered})
+    return {
+        "session_id": session_path.stem,
+        "session_ids": chain,
+        "files": result,
+        "has_file_history": bool(result),
+    }
+
+
 @app.get("/api/file-history")
-def get_file_history(session_path: str = Query(...)):
+def get_file_history(session_path: str = Query(...), conversation: bool = False):
     fp = _safe_path(Path(session_path))
     if not fp.exists():
         raise HTTPException(404, "Session not found")
     if not is_uuid(fp.stem):
         raise HTTPException(400, "Not a UUID session")
-    return _get_session_files(fp)
+    return _get_conversation_files(fp) if conversation else _get_session_files(fp)
 
 
 @app.get("/api/file-history/orphans")
