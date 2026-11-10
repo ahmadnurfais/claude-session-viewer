@@ -352,6 +352,97 @@ def _safe_path(path: Path) -> Path:
     raise HTTPException(403, "Access denied")
 
 
+def _message_time(record: dict) -> Optional[float]:
+    value = record.get("timestamp")
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            return None
+        return parsed.timestamp()
+    except (ValueError, OverflowError, OSError):
+        return None
+
+
+def _human_message(record: dict) -> bool:
+    if record.get("type") != "user" or record.get("isSidechain") or record.get("isMeta"):
+        return False
+    content = record.get("message", {}).get("content", "")
+    if isinstance(content, list):
+        content = "\n".join(
+            block.get("text", "")
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+    if not isinstance(content, str) or not content.strip():
+        return False
+    return not content.lstrip().startswith((
+        "<task-notification>", "<system-reminder>", "<local-command",
+        "Base directory for this skill:", "[Request interrupted by user]",
+        "[Your previous response had no visible output.",
+    ))
+
+
+def _continuation_chains(records_by_id: dict) -> list:
+    edges = {}
+    incoming = {}
+    for sid, records in records_by_id.items():
+        targets = {
+            record.get("continuedInSessionId")
+            for record in records
+            if record.get("type") == "continued-in"
+        }
+        if len(targets) == 1:
+            target = next(iter(targets))
+            if target in records_by_id and target != sid:
+                edges[sid] = target
+                incoming.setdefault(target, []).append(sid)
+    # Ambiguous branches remain separate raw transcripts.
+    edges = {sid: target for sid, target in edges.items() if len(incoming[target]) == 1}
+    cycles = set()
+    for sid in edges:
+        trail = []
+        current = sid
+        while current in edges and current not in trail:
+            trail.append(current)
+            current = edges[current]
+        if current in trail:
+            cycles.update(trail[trail.index(current):])
+    edges = {
+        sid: target for sid, target in edges.items()
+        if sid not in cycles and target not in cycles
+    }
+    children = set(edges.values())
+    chains = []
+    for sid in records_by_id:
+        if sid in children:
+            continue
+        chain = [sid]
+        while chain[-1] in edges:
+            chain.append(edges[chain[-1]])
+        chains.append(chain)
+    return chains
+
+
+def _merged_records(segments: list) -> list:
+    merged = []
+    seen = set()
+    for records in segments:
+        for record in records:
+            if record.get("type") not in ("user", "assistant"):
+                continue
+            uuid = record.get("uuid")
+            if uuid and uuid in seen:
+                continue
+            if uuid:
+                seen.add(uuid)
+            merged.append(record)
+    # Stable sorting keeps equal timestamps in transcript order.
+    merged.sort(key=lambda record: _message_time(record) or 0)
+    return merged
+
+
 def _build_sessions(proj: Path) -> dict:
     """Shared logic for listing sessions — works for both live and backup dirs."""
     session_files = sorted(
@@ -390,10 +481,12 @@ def _build_sessions(proj: Path) -> dict:
             orphaned_agents.append(entry)
 
     sessions = []
+    records_by_id = {}
     for sf in session_files:
         sid = sf.stem
         records = read_jsonl(sf)
-        user_msgs = [r for r in records if r.get("type") == "user" and not r.get("isSidechain")]
+        records_by_id[sid] = records
+        user_msgs = [r for r in records if _human_message(r)]
         title = _first_user_title(records) or sid
 
         subagent_dir = proj / sid / "subagents"
@@ -437,7 +530,33 @@ def _build_sessions(proj: Path) -> dict:
             "resume_command": f"claude --resume {sid}",
         })
 
-    return {"sessions": sessions, "orphaned_agents": orphaned_agents}
+    by_id = {session["id"]: session for session in sessions}
+    conversations = []
+    for chain in _continuation_chains(records_by_id):
+        segments = [by_id[sid] for sid in chain]
+        records = _merged_records([records_by_id[sid] for sid in chain])
+        latest = dict(segments[-1])
+        times = [_message_time(record) for record in records]
+        latest["mtime"] = max(
+            (value for value in times if value is not None),
+            default=max(segment["mtime"] for segment in segments),
+        )
+        latest["message_count"] = sum(_human_message(record) for record in records)
+        latest["segments"] = segments
+        latest["size_bytes"] = sum(segment["size_bytes"] for segment in segments)
+        agents = {}
+        for segment in segments:
+            for agent in segment["agents"]:
+                agents[agent["path"]] = agent
+            segment["continued_at"] = next((
+                record.get("timestamp")
+                for record in records_by_id[segment["id"]]
+                if record.get("type") == "continued-in"
+            ), None)
+        latest["agents"] = list(agents.values())
+        conversations.append(latest)
+    conversations.sort(key=lambda session: session["mtime"], reverse=True)
+    return {"sessions": conversations, "orphaned_agents": orphaned_agents}
 
 
 _FILE_WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
@@ -763,9 +882,20 @@ def _parse_blocks(content) -> List[dict]:
 
 
 @app.get("/api/content")
-def get_content(path: str = Query(...)):
+def get_content(path: str = Query(...), conversation: bool = False):
     file_path = _safe_path(Path(path))
     records = read_jsonl(file_path)
+    if conversation and is_uuid(file_path.stem):
+        records_by_id = {
+            candidate.stem: read_jsonl(candidate)
+            for candidate in file_path.parent.glob("*.jsonl")
+            if is_uuid(candidate.stem)
+        }
+        chain = next((
+            chain for chain in _continuation_chains(records_by_id)
+            if file_path.stem in chain
+        ), [file_path.stem])
+        records = _merged_records([records_by_id.get(sid, []) for sid in chain])
     messages = []
     for r in records:
         if r.get("type") not in ("user", "assistant"):

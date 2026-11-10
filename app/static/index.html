@@ -1160,20 +1160,38 @@ function renderSession(s, readonly) {
   const size = formatBytes(s.size_bytes);
   const time = formatTime(s.mtime);
   const agentCount = s.agents.length;
+  const grouped = (s.segments || []).length > 1;
+  let segmentsHtml = '';
+  if (grouped && expanded) {
+    segmentsHtml = `<div class="agents-list">${s.segments.map(segment => `
+      <div class="agent-item" data-path="${esc(segment.path)}" data-title="${esc(segment.title)}"
+           onclick="viewFileFromEl(this)">
+        <div>
+          <div class="agent-task">${esc(segment.id)}</div>
+          <div class="session-meta">${segment.continued_at ? `Continued ${esc(segment.continued_at)}` : 'Latest segment'}</div>
+          <div class="session-actions" onclick="event.stopPropagation()">
+            <button class="btn btn-ghost" onclick="openRenameModal('${esc(segment.path)}', '${esc(segment.title)}')">Rename segment</button>
+            ${!readonly ? `<button class="btn btn-ghost" data-resume-command="${esc(segment.resume_command)}" onclick="copyResumeCommand(this)">Copy resume</button>` : ''}
+            <button class="btn btn-danger" data-path="${esc(segment.path)}" data-kind="session"
+                    data-label="${esc(segment.id)}" onclick="confirmDeleteFromEl(this)">Delete segment</button>
+          </div>
+        </div>
+      </div>`).join('')}</div>`;
+  }
 
   let agentsHtml = '';
   if (expanded && agentCount > 0) {
     agentsHtml = `<div class="agents-list">${s.agents.map(a => renderAgent(a, readonly)).join('')}</div>`;
   }
 
-  const deleteBtn = `
+  const deleteBtn = !grouped ? `
     <button class="btn btn-danger"
             data-path="${esc(s.path)}" data-kind="session" data-label="${esc(s.title)}"
-            onclick="confirmDeleteFromEl(this)">Delete</button>`;
+            onclick="confirmDeleteFromEl(this)">Delete</button>` : '';
 
-  const toggleBtn = agentCount ? `
+  const toggleBtn = agentCount || grouped ? `
     <button class="btn btn-ghost" onclick="toggleAgents('${s.id}', ${readonly})">
-      ${expanded ? '▾ agents' : '▸ agents'}
+      ${expanded ? '▾' : '▸'} ${grouped ? `${s.segments.length} segments` : 'agents'}
     </button>` : '';
 
   const copyResumeBtn = !readonly && s.resume_command ? `
@@ -1182,24 +1200,25 @@ function renderSession(s, readonly) {
 
   return `
     <div class="session-item ${isActive ? 'active' : ''}"
-         data-path="${esc(s.path)}" data-title="${esc(s.title)}"
+         data-path="${esc(s.path)}" data-title="${esc(s.title)}" data-conversation="${grouped}"
          onclick="viewFileFromEl(this)">
       <div class="session-title-row">
         <div class="session-title" title="${esc(s.title)}">${esc(s.title)}</div>
-        <button class="rename-btn" title="Rename session"
-                onclick="event.stopPropagation(); openRenameModal('${esc(s.path)}', '${esc(s.title)}')">✎</button>
+        ${!grouped ? `<button class="rename-btn" title="Rename session"
+                onclick="event.stopPropagation(); openRenameModal('${esc(s.path)}', '${esc(s.title)}')">✎</button>` : ''}
       </div>
       <div class="session-meta">
-        <span>${s.message_count} msgs</span>
+        <span>${s.message_count} human msgs</span>
         <span>${size}</span>
         <span>${time}</span>
         ${agentCount ? `<span style="color:var(--tool)">${agentCount} agent${agentCount>1?'s':''}</span>` : ''}
       </div>
-      ${(!readonly || agentCount) ? `
+      ${(!readonly || agentCount || grouped) ? `
         <div class="session-actions" onclick="event.stopPropagation()">
           ${toggleBtn}${copyResumeBtn}${deleteBtn}
         </div>` : ''}
     </div>
+    ${segmentsHtml}
     ${agentsHtml}
   `;
 }
@@ -1260,10 +1279,11 @@ async function copyResumeCommand(btn) {
 
 // ── Content ───────────────────────────────────────────────────────────────────
 function viewFileFromEl(el) {
-  viewFile(el.dataset.path, el.dataset.title);
+  viewFile(el.dataset.path, el.dataset.title, el.dataset.conversation === 'true');
 }
 
-async function viewFile(path, title) {
+async function viewFile(path, title, conversation = false) {
+  state.activeConversation = conversation;
   state.activeItemPath = path;
   state.fileHistoryTab = 'conversation';
   state.fileHistoryData = null;
@@ -1282,10 +1302,10 @@ async function loadContent(path, silent = false) {
   if (!silent) area.innerHTML = '<div class="loader" style="padding:32px">Loading…</div>';
 
   const stem = path.split('/').pop().replace('.jsonl', '');
-  const canHaveHistory = isUUID(stem);
+  const canHaveHistory = isUUID(stem) && !state.activeConversation;
 
   const [data, histData] = await Promise.all([
-    api('GET', '/api/content', { path }),
+    api('GET', '/api/content', { path, conversation: state.activeConversation ? 'true' : 'false' }),
     canHaveHistory
       ? api('GET', '/api/file-history', { session_path: path }).catch(() => null)
       : Promise.resolve(null),
@@ -1315,7 +1335,7 @@ function renderContent(data, path) {
   let html = `
     <div class="content-sticky-top">
       <div class="content-header">
-        <span class="content-title">${esc(filename)}</span>
+        <span class="content-title">${state.activeConversation ? 'Merged conversation · select a segment for file history' : esc(filename)}</span>
         ${isBackup ? '<span class="content-badge">backup</span>' : ''}
         <span class="content-stats">${msgCount} message${msgCount !== 1 ? 's' : ''}</span>
         <label class="content-toggle" title="Render user and assistant text as Markdown">
