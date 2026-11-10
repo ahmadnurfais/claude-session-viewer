@@ -41,6 +41,9 @@
   #panel-projects, #panel-sessions, #panel-content { min-width: 0; }
   .panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
   .panel-collapse { cursor: pointer; color: var(--text1); background: var(--bg3); border: 1px solid var(--border); border-radius: 3px; padding: 3px 7px; }
+  .panel-controls { display: flex; gap: 4px; flex-shrink: 0; }
+  .panel-collapsed .panel-controls { flex-direction: column; }
+  .panel-refresh:disabled { cursor: wait; opacity: 0.5; }
   .panel-collapse:focus-visible, .panel-search:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .panel-search { display: block; width: 100%; margin-top: 8px; padding: 6px 8px; background: var(--bg0); color: var(--text0); border: 1px solid var(--border); border-radius: 4px; }
   .search-count { display: block; margin-top: 5px; font-size: 10px; text-transform: none; letter-spacing: normal; }
@@ -538,7 +541,10 @@
     <div class="panel-header" id="panel-projects-header">
       <div class="panel-heading">
         <span class="panel-label" id="panel-projects-label">Projects</span>
-        <button class="panel-collapse" id="collapse-projects" aria-label="Collapse projects" aria-expanded="true" aria-controls="project-list" onclick="togglePanel('projects')">‹</button>
+        <div class="panel-controls">
+          <button class="panel-collapse panel-refresh" id="refresh-projects" aria-label="Refresh projects" title="Refresh projects" onclick="refreshPanel('projects')">↻</button>
+          <button class="panel-collapse" id="collapse-projects" aria-label="Collapse projects" aria-expanded="true" aria-controls="project-list" onclick="togglePanel('projects')">‹</button>
+        </div>
       </div>
       <input class="panel-search" id="search-projects" type="search" aria-label="Search projects" placeholder="Search projects…" oninput="filterPanel('projects')">
       <span class="search-count" id="count-projects" aria-live="polite"></span>
@@ -551,7 +557,10 @@
     <div class="panel-header" id="panel-sessions-header">
       <div class="panel-heading">
         <span class="panel-label" id="panel-sessions-label">Sessions &amp; Agents</span>
-        <button class="panel-collapse" id="collapse-sessions" aria-label="Collapse sessions" aria-expanded="true" aria-controls="session-list" onclick="togglePanel('sessions')">‹</button>
+        <div class="panel-controls">
+          <button class="panel-collapse panel-refresh" id="refresh-sessions" aria-label="Refresh sessions" title="Refresh selected project sessions" onclick="refreshPanel('sessions')">↻</button>
+          <button class="panel-collapse" id="collapse-sessions" aria-label="Collapse sessions" aria-expanded="true" aria-controls="session-list" onclick="togglePanel('sessions')">‹</button>
+        </div>
       </div>
       <input class="panel-search" id="search-sessions" type="search" aria-label="Search sessions and agents" placeholder="Search sessions…" oninput="filterPanel('sessions')">
       <span class="search-count" id="count-sessions" aria-live="polite"></span>
@@ -708,6 +717,76 @@ async function api(method, url, params, body) {
   const r = await fetch(u, opts);
   if (!r.ok) throw new Error(await r.text());
   return r.json();
+}
+
+async function refreshPanel(panel) {
+  const button = document.getElementById(`refresh-${panel}`);
+  if (button.disabled) return;
+  const { mode, activeProject, activeBackupDate, activeBackupProject } = state;
+  const selection = () => JSON.stringify([
+    state.mode, state.activeProject, state.activeBackupDate, state.activeBackupProject,
+  ]);
+  const originalSelection = selection();
+  let url;
+  let apply;
+  if (panel === 'projects') {
+    url = mode === 'backup' ? '/api/backups' : '/api/projects';
+    apply = data => {
+      if (mode === 'backup') {
+        state.backups = data;
+        updateBackupInfo();
+        renderBackupDates();
+      } else {
+        state.projects = data;
+        renderProjects();
+      }
+    };
+  } else if (mode === 'live' && activeProject === '__orphaned_fh__') {
+    url = '/api/file-history/orphans';
+    apply = data => {
+      state.orphanedFH = data;
+      renderProjects();
+      renderOrphanedFHSessions();
+    };
+  } else if (mode === 'live' && activeProject) {
+    url = `/api/projects/${encodeURIComponent(activeProject)}/sessions`;
+    apply = data => {
+      state.sessions = data.sessions || [];
+      state.orphanedAgents = data.orphaned_agents || [];
+      renderSessions();
+    };
+  } else if (mode === 'backup' && activeBackupDate) {
+    const base = `/api/backups/${encodeURIComponent(activeBackupDate)}/projects`;
+    if (activeBackupProject) {
+      url = `${base}/${encodeURIComponent(activeBackupProject)}/sessions`;
+      apply = data => {
+        state.backupSessions = data.sessions || [];
+        state.backupOrphanedAgents = data.orphaned_agents || [];
+        renderBackupSessions();
+      };
+    } else {
+      url = base;
+      apply = data => {
+        state.backupProjects = data;
+        renderBackupProjects();
+      };
+    }
+  } else {
+    showToast(mode === 'backup' ? 'Select a backup date first' : 'Select a project first');
+    return;
+  }
+  button.disabled = true;
+  button.setAttribute('aria-busy', 'true');
+  try {
+    const data = await api('GET', url);
+    // A late response must not replace the newly selected list.
+    if (selection() === originalSelection) apply(data);
+  } catch (error) {
+    showToast('Refresh failed: ' + error.message, 'error');
+  } finally {
+    button.disabled = false;
+    button.removeAttribute('aria-busy');
+  }
 }
 
 // Search the list metadata only; transcript content remains untouched.
